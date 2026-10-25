@@ -472,7 +472,7 @@ func joinNames(m map[string]config.Participant) string {
 
 func cmdProbe(args []string) error {
 	fs := flag.NewFlagSet("probe", flag.ExitOnError)
-	prompt := fs.String("prompt", "responde solo: ok", "test prompt")
+	prompt := fs.String("prompt", "reply with only: ok", "test prompt")
 	viaStdin := fs.Bool("stdin", false, "send the prompt over stdin")
 	timeout := fs.Int("timeout", 120, "timeout in seconds")
 	_ = fs.Parse(args)
