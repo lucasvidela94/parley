@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fast gate: formatting, vet and tests. Full gate: `make check`.
+set -eu
+
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+[ -z "$files" ] && exit 0
+
+unformatted=$(gofmt -l $files)
+if [ -n "$unformatted" ]; then
+	echo "gofmt needed:"
+	echo "$unformatted"
+	exit 1
+fi
+
+go vet ./...
+go test ./...
