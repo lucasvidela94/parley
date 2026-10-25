@@ -202,15 +202,24 @@ OpenCode: `--session`). If the session vanished, parley starts a fresh one inste
 ## Development
 
 ```bash
-go test ./...
-go vet ./...
+make hooks        # install .githooks (gofmt + vet + tests on commit, make check on push)
+make check        # gofmt + vet + golangci-lint + tests
+make race         # go test -race ./...
+make vuln         # govulncheck
 ```
 
-Tests cover output parsing per format, the CLI adapter, the SQLite store, cycle and depth
-guards, the MCP handshake and the updater, all with fake transports.
+`make check` is the gate. It runs the strict linter config in `.golangci.yml`, which is
+what keeps generated code from drifting into `utils/` packages, unchecked errors,
+unbounded goroutines or invented dependencies. Tests cover output parsing per format, the
+CLI adapter, the SQLite store, cycle and depth guards, the MCP handshake and the updater,
+all with fake transports.
+
+Contributor rules live in [`AGENTS.md`](AGENTS.md). To add a tool or a command, follow
+[`skills/parley-dev/SKILL.md`](skills/parley-dev/SKILL.md).
 
 ## Docs
 
+- [`SKILL.md`](SKILL.md) — the usage skill installed by `parley setup`.
 - [`docs/decisions.md`](docs/decisions.md) — what was decided and why, including reversals.
 - [`docs/prior-art.md`](docs/prior-art.md) — what already exists and what doesn't.
 - [`docs/origin.md`](docs/contexto.md) — origin of the project.
