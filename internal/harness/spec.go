@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -193,62 +194,86 @@ func (s Spec) Parse(stdout string) (Reply, error) {
 	switch s.Output {
 	case "text":
 		rep.Text = strings.TrimSpace(stdout)
+		return rep, nil
 	case "json":
-		var obj map[string]any
-		if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &obj); err != nil {
-			return rep, fmt.Errorf("reply is not JSON: %w", err)
-		}
-		if msg := strAt(obj, s.ErrorPath); msg != "" {
-			return rep, fmt.Errorf("%s", msg)
-		}
-		if b, ok := boolAt(obj, s.ErrorBoolPath); ok && b {
-			return rep, fmt.Errorf("the harness reported an error")
-		}
-		rep.Text = strings.TrimSpace(strAt(obj, s.TextPath))
-		if strings.HasPrefix(s.Session, "output:") {
-			rep.SessionID = strAt(obj, strings.TrimPrefix(s.Session, "output:"))
-		}
-		if s.CostPath != "" {
-			rep.CostUSD, _ = floatAt(obj, s.CostPath)
-		}
-		if rep.Text == "" {
-			return rep, fmt.Errorf("reply has no text (%s empty)", s.TextPath)
-		}
+		return s.parseJSON(stdout)
 	case "jsonl":
-		var parts []string
-		for _, line := range strings.Split(stdout, "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			var obj map[string]any
-			if err := json.Unmarshal([]byte(line), &obj); err != nil {
-				continue
-			}
-			if s.ErrorEventType != "" && strAt(obj, "type") == s.ErrorEventType {
-				return rep, fmt.Errorf("event %s: %s", s.ErrorEventType, line)
-			}
-			if msg := strAt(obj, s.ErrorPath); msg != "" {
-				return rep, fmt.Errorf("%s", msg)
-			}
-			if rep.SessionID == "" && strings.HasPrefix(s.Session, "output:") {
-				rep.SessionID = strAt(obj, strings.TrimPrefix(s.Session, "output:"))
-			}
-			if s.TextFilterPath != "" && strAt(obj, s.TextFilterPath) != s.TextFilterEquals {
-				continue
-			}
-			if txt := strAt(obj, s.TextPath); txt != "" {
-				parts = append(parts, txt)
-			}
-		}
-		rep.Text = strings.TrimSpace(strings.Join(parts, "\n"))
-		if rep.Text == "" {
-			return rep, fmt.Errorf("reply has no text (%s empty)", s.TextPath)
-		}
+		return s.parseJSONL(stdout)
 	default:
 		return rep, fmt.Errorf("unknown output: %q", s.Output)
 	}
+}
+
+func (s Spec) parseJSON(stdout string) (Reply, error) {
+	rep := Reply{Raw: stdout}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &obj); err != nil {
+		return rep, fmt.Errorf("reply is not JSON: %w", err)
+	}
+	if err := s.checkError(obj); err != nil {
+		return rep, err
+	}
+	rep.Text = strings.TrimSpace(strAt(obj, s.TextPath))
+	rep.SessionID = s.sessionFrom(obj)
+	if s.CostPath != "" {
+		rep.CostUSD, _ = floatAt(obj, s.CostPath)
+	}
+	if rep.Text == "" {
+		return rep, fmt.Errorf("reply has no text (%s empty)", s.TextPath)
+	}
 	return rep, nil
+}
+
+func (s Spec) parseJSONL(stdout string) (Reply, error) {
+	rep := Reply{Raw: stdout}
+	var parts []string
+	for _, line := range strings.Split(stdout, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			continue
+		}
+		if s.ErrorEventType != "" && strAt(obj, "type") == s.ErrorEventType {
+			return rep, fmt.Errorf("event %s: %s", s.ErrorEventType, line)
+		}
+		if err := s.checkError(obj); err != nil {
+			return rep, err
+		}
+		if rep.SessionID == "" {
+			rep.SessionID = s.sessionFrom(obj)
+		}
+		if s.TextFilterPath != "" && strAt(obj, s.TextFilterPath) != s.TextFilterEquals {
+			continue
+		}
+		if txt := strAt(obj, s.TextPath); txt != "" {
+			parts = append(parts, txt)
+		}
+	}
+	rep.Text = strings.TrimSpace(strings.Join(parts, "\n"))
+	if rep.Text == "" {
+		return rep, fmt.Errorf("reply has no text (%s empty)", s.TextPath)
+	}
+	return rep, nil
+}
+
+func (s Spec) checkError(obj map[string]any) error {
+	if msg := strAt(obj, s.ErrorPath); msg != "" {
+		return errors.New(msg)
+	}
+	if b, ok := boolAt(obj, s.ErrorBoolPath); ok && b {
+		return errors.New("the harness reported an error")
+	}
+	return nil
+}
+
+func (s Spec) sessionFrom(obj map[string]any) string {
+	if !strings.HasPrefix(s.Session, "output:") {
+		return ""
+	}
+	return strAt(obj, strings.TrimPrefix(s.Session, "output:"))
 }
 
 func at(obj map[string]any, path string) (any, bool) {

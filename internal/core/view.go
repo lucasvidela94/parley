@@ -26,10 +26,10 @@ func (v View) Markdown() string {
 	return b.String()
 }
 
-func oneLine(s string, max int) string {
+func oneLine(s string, limit int) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > max {
-		s = s[:max] + "…"
+	if len(s) > limit {
+		s = s[:limit] + "…"
 	}
 	return s
 }

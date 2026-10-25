@@ -104,17 +104,17 @@ func (e *Engine) Participants() []map[string]string {
 }
 
 // Open starts a conversation. It does not contact anyone yet.
-func (e *Engine) Open(topic, contextStr string) (View, error) {
+func (e *Engine) Open(ctx context.Context, topic, contextStr string) (View, error) {
 	if strings.TrimSpace(topic) == "" {
 		return View{}, errors.New("empty topic")
 	}
 	dir, _ := os.Getwd()
 	now := time.Now().UTC()
 	c := store.Conversation{ID: store.NewID("cnv"), Topic: topic, Context: contextStr, Status: "open", Dir: dir, CreatedAt: now, UpdatedAt: now}
-	if err := e.st.CreateConversation(c); err != nil {
+	if err := e.st.CreateConversation(ctx, c); err != nil {
 		return View{}, err
 	}
-	return e.Read(c.ID)
+	return e.Read(ctx, c.ID)
 }
 
 // Send delivers one message to one participant and waits for the reply. With no
@@ -138,12 +138,12 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	var conv store.Conversation
 	var err error
 	if ephemeral {
-		conv, err = e.openEphemeral(msg, req.Context)
+		conv, err = e.openEphemeral(ctx, msg, req.Context)
 		if err != nil {
 			return SendResult{}, err
 		}
 	} else {
-		conv, err = e.st.Conversation(req.ConversationID)
+		conv, err = e.st.Conversation(ctx, req.ConversationID)
 		if err != nil {
 			return SendResult{}, err
 		}
@@ -152,11 +152,11 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		}
 	}
 
-	history, err := e.st.Messages(conv.ID)
+	history, err := e.st.Messages(ctx, conv.ID)
 	if err != nil {
 		return SendResult{}, err
 	}
-	_ = e.st.AddMessage(store.Message{ConversationID: conv.ID, Author: e.identity, Kind: "message", Body: msg})
+	_ = e.st.AddMessage(ctx, store.Message{ConversationID: conv.ID, Author: e.identity, Kind: "message", Body: msg})
 
 	in := promptInput{
 		identity:     e.identity,
@@ -174,31 +174,31 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		return renderPrompt(in)
 	})
 	if err != nil {
-		_ = e.st.AddMessage(store.Message{ConversationID: conv.ID, Author: req.To, Kind: "error", Body: err.Error()})
+		_ = e.st.AddMessage(ctx, store.Message{ConversationID: conv.ID, Author: req.To, Kind: "error", Body: err.Error()})
 		if ephemeral {
-			_ = e.st.SetStatus(conv.ID, "closed")
+			_ = e.st.SetStatus(ctx, conv.ID, "closed")
 		}
-		failed, _ := e.st.Conversation(conv.ID)
+		failed, _ := e.st.Conversation(ctx, conv.ID)
 		return SendResult{Conversation: failed}, err
 	}
 	reply := store.Message{ConversationID: conv.ID, Author: req.To, Kind: "message", Body: rep.Text, CostUSD: rep.CostUSD}
-	if err := e.st.AddMessage(reply); err != nil {
+	if err := e.st.AddMessage(ctx, reply); err != nil {
 		return SendResult{}, err
 	}
 	if ephemeral {
-		_ = e.st.SetStatus(conv.ID, "closed")
+		_ = e.st.SetStatus(ctx, conv.ID, "closed")
 	}
-	conv, _ = e.st.Conversation(conv.ID)
+	conv, _ = e.st.Conversation(ctx, conv.ID)
 	return SendResult{Conversation: conv, Reply: reply, CostUSD: rep.CostUSD}, nil
 }
 
 // Read returns a conversation and its messages.
-func (e *Engine) Read(id string) (View, error) {
-	conv, err := e.st.Conversation(id)
+func (e *Engine) Read(ctx context.Context, id string) (View, error) {
+	conv, err := e.st.Conversation(ctx, id)
 	if err != nil {
 		return View{}, err
 	}
-	msgs, err := e.st.Messages(id)
+	msgs, err := e.st.Messages(ctx, id)
 	if err != nil {
 		return View{}, err
 	}
@@ -207,8 +207,8 @@ func (e *Engine) Read(id string) (View, error) {
 
 // Close ends a conversation, optionally with a note (the conclusion, the next
 // step, whatever the agent decided to record).
-func (e *Engine) Close(id, note string) (View, error) {
-	conv, err := e.st.Conversation(id)
+func (e *Engine) Close(ctx context.Context, id, note string) (View, error) {
+	conv, err := e.st.Conversation(ctx, id)
 	if err != nil {
 		return View{}, err
 	}
@@ -216,35 +216,35 @@ func (e *Engine) Close(id, note string) (View, error) {
 		return View{}, fmt.Errorf("conversation %s was already closed", id)
 	}
 	if n := strings.TrimSpace(note); n != "" {
-		_ = e.st.AddMessage(store.Message{ConversationID: id, Author: e.identity, Kind: "note", Body: n})
+		_ = e.st.AddMessage(ctx, store.Message{ConversationID: id, Author: e.identity, Kind: "note", Body: n})
 	}
-	if err := e.st.SetStatus(id, "closed"); err != nil {
+	if err := e.st.SetStatus(ctx, id, "closed"); err != nil {
 		return View{}, err
 	}
-	return e.Read(id)
+	return e.Read(ctx, id)
 }
 
-func (e *Engine) List(dir string, limit int) ([]store.Conversation, error) {
-	return e.st.ListConversations(dir, limit)
+func (e *Engine) List(ctx context.Context, dir string, limit int) ([]store.Conversation, error) {
+	return e.st.ListConversations(ctx, dir, limit)
 }
 
-func (e *Engine) ResetSession(participant, dir string) error {
+func (e *Engine) ResetSession(ctx context.Context, participant, dir string) error {
 	if _, ok := e.cfg.Participants[participant]; !ok {
 		return fmt.Errorf("unknown participant: %q", participant)
 	}
-	return e.st.ClearSession(participant, dir)
+	return e.st.ClearSession(ctx, participant, dir)
 }
 
 // --- internals -------------------------------------------------------------
 
-func (e *Engine) openEphemeral(message, contextStr string) (store.Conversation, error) {
+func (e *Engine) openEphemeral(ctx context.Context, message, contextStr string) (store.Conversation, error) {
 	dir, _ := os.Getwd()
 	now := time.Now().UTC()
 	conv := store.Conversation{
 		ID: store.NewID("cnv"), Topic: firstLine(message), Context: contextStr,
 		Status: "open", Dir: dir, CreatedAt: now, UpdatedAt: now,
 	}
-	return conv, e.st.CreateConversation(conv)
+	return conv, e.st.CreateConversation(ctx, conv)
 }
 
 func (e *Engine) turn(ctx context.Context, name string, timeout time.Duration, write bool, build func(dir string, readOnly bool) string) (harness.Reply, error) {
@@ -265,7 +265,7 @@ func (e *Engine) turn(ctx context.Context, name string, timeout time.Duration, w
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	sid, ok, err := e.st.Session(name, dir)
+	sid, ok, err := e.st.Session(ctx, name, dir)
 	if err != nil {
 		return harness.Reply{}, err
 	}
@@ -289,7 +289,7 @@ func (e *Engine) turn(ctx context.Context, name string, timeout time.Duration, w
 		sid = opts.SessionID
 	}
 	if sid != "" {
-		_ = e.st.SetSession(name, dir, sid)
+		_ = e.st.SetSession(ctx, name, dir, sid)
 	}
 	return rep, nil
 }

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -36,7 +37,7 @@ type Message struct {
 type Store struct{ db *sql.DB }
 
 func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return nil, err
 	}
 	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
@@ -46,8 +47,8 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(4)
 	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
-		db.Close()
+	if err := s.migrate(context.Background()); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
@@ -55,8 +56,8 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
+func (s *Store) migrate(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
 CREATE TABLE IF NOT EXISTS sessions (
   participant TEXT NOT NULL,
   dir         TEXT NOT NULL,
@@ -86,41 +87,41 @@ CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, cr
 	return err
 }
 
-func (s *Store) Session(participant, dir string) (string, bool, error) {
+func (s *Store) Session(ctx context.Context, participant, dir string) (string, bool, error) {
 	var id string
-	err := s.db.QueryRow(`SELECT session_id FROM sessions WHERE participant=? AND dir=?`, participant, dir).Scan(&id)
+	err := s.db.QueryRowContext(ctx, `SELECT session_id FROM sessions WHERE participant=? AND dir=?`, participant, dir).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	return id, err == nil, err
 }
 
-func (s *Store) SetSession(participant, dir, id string) error {
-	_, err := s.db.Exec(`INSERT INTO sessions(participant, dir, session_id, updated_at) VALUES(?,?,?,?)
+func (s *Store) SetSession(ctx context.Context, participant, dir, id string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(participant, dir, session_id, updated_at) VALUES(?,?,?,?)
 ON CONFLICT(participant, dir) DO UPDATE SET session_id=excluded.session_id, updated_at=excluded.updated_at`,
 		participant, dir, id, now())
 	return err
 }
 
-func (s *Store) ClearSession(participant, dir string) error {
+func (s *Store) ClearSession(ctx context.Context, participant, dir string) error {
 	if dir == "" {
-		_, err := s.db.Exec(`DELETE FROM sessions WHERE participant=?`, participant)
+		_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE participant=?`, participant)
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM sessions WHERE participant=? AND dir=?`, participant, dir)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE participant=? AND dir=?`, participant, dir)
 	return err
 }
 
-func (s *Store) CreateConversation(c Conversation) error {
-	_, err := s.db.Exec(`INSERT INTO conversations(id,topic,context,status,dir,created_at,updated_at)
+func (s *Store) CreateConversation(ctx context.Context, c Conversation) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO conversations(id,topic,context,status,dir,created_at,updated_at)
 VALUES(?,?,?,?,?,?,?)`, c.ID, c.Topic, c.Context, c.Status, c.Dir, ts(c.CreatedAt), ts(c.UpdatedAt))
 	return err
 }
 
-func (s *Store) Conversation(id string) (Conversation, error) {
+func (s *Store) Conversation(ctx context.Context, id string) (Conversation, error) {
 	var c Conversation
 	var created, updated string
-	err := s.db.QueryRow(`SELECT id,topic,context,status,dir,created_at,updated_at FROM conversations WHERE id=?`, id).
+	err := s.db.QueryRowContext(ctx, `SELECT id,topic,context,status,dir,created_at,updated_at FROM conversations WHERE id=?`, id).
 		Scan(&c.ID, &c.Topic, &c.Context, &c.Status, &c.Dir, &created, &updated)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -133,27 +134,27 @@ func (s *Store) Conversation(id string) (Conversation, error) {
 	return c, nil
 }
 
-func (s *Store) AddMessage(m Message) error {
+func (s *Store) AddMessage(ctx context.Context, m Message) error {
 	if m.ID == "" {
 		m.ID = NewID("msg")
 	}
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now().UTC()
 	}
-	_, err := s.db.Exec(`INSERT INTO messages(id,conversation_id,author,kind,body,cost_usd,created_at) VALUES(?,?,?,?,?,?,?)`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO messages(id,conversation_id,author,kind,body,cost_usd,created_at) VALUES(?,?,?,?,?,?,?)`,
 		m.ID, m.ConversationID, m.Author, m.Kind, m.Body, m.CostUSD, ts(m.CreatedAt))
 	if err == nil {
-		_, _ = s.db.Exec(`UPDATE conversations SET updated_at=? WHERE id=?`, ts(time.Now().UTC()), m.ConversationID)
+		_, _ = s.db.ExecContext(ctx, `UPDATE conversations SET updated_at=? WHERE id=?`, ts(time.Now().UTC()), m.ConversationID)
 	}
 	return err
 }
 
-func (s *Store) Messages(conversationID string) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT id,conversation_id,author,kind,body,cost_usd,created_at FROM messages WHERE conversation_id=? ORDER BY created_at, rowid`, conversationID)
+func (s *Store) Messages(ctx context.Context, conversationID string) ([]Message, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,author,kind,body,cost_usd,created_at FROM messages WHERE conversation_id=? ORDER BY created_at, rowid`, conversationID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Message
 	for rows.Next() {
 		var m Message
@@ -167,12 +168,12 @@ func (s *Store) Messages(conversationID string) ([]Message, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) SetStatus(id, status string) error {
-	_, err := s.db.Exec(`UPDATE conversations SET status=?, updated_at=? WHERE id=?`, status, now(), id)
+func (s *Store) SetStatus(ctx context.Context, id, status string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE conversations SET status=?, updated_at=? WHERE id=?`, status, now(), id)
 	return err
 }
 
-func (s *Store) ListConversations(dir string, limit int) ([]Conversation, error) {
+func (s *Store) ListConversations(ctx context.Context, dir string, limit int) ([]Conversation, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -184,11 +185,11 @@ func (s *Store) ListConversations(dir string, limit int) ([]Conversation, error)
 	}
 	q += ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Conversation
 	for rows.Next() {
 		var c Conversation

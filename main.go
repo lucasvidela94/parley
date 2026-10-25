@@ -18,7 +18,6 @@ import (
 	"github.com/lucasvidela94/parley/internal/core"
 	"github.com/lucasvidela94/parley/internal/harness"
 	"github.com/lucasvidela94/parley/internal/mcp"
-	"github.com/lucasvidela94/parley/internal/skills"
 	"github.com/lucasvidela94/parley/internal/store"
 	"github.com/lucasvidela94/parley/internal/update"
 )
@@ -112,7 +111,7 @@ func cmdMCP() error {
 	if err != nil {
 		return err
 	}
-	defer e.Shutdown()
+	defer func() { _ = e.Shutdown() }()
 	return mcp.New(e, version).Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr)
 }
 
@@ -121,7 +120,7 @@ func cmdParticipants() error {
 	if err != nil {
 		return err
 	}
-	defer e.Shutdown()
+	defer func() { _ = e.Shutdown() }()
 	for _, p := range e.Participants() {
 		fmt.Printf("%-10s %-12s %-34s %s\n", p["name"], p["harness"], defStr(p["model"], "(harness default model)"), p["permission"])
 	}
@@ -151,7 +150,7 @@ func cmdSend(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer e.Shutdown()
+	defer func() { _ = e.Shutdown() }()
 	res, err := e.Send(context.Background(), core.SendRequest{
 		ConversationID: *in, To: *to, Message: msg, Context: *contextStr, Write: *write, TimeoutS: *timeout,
 	})
@@ -181,8 +180,8 @@ func cmdOpen(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer e.Shutdown()
-	view, err := e.Open(*topic, *contextStr)
+	defer func() { _ = e.Shutdown() }()
+	view, err := e.Open(context.Background(), *topic, *contextStr)
 	if err != nil {
 		return err
 	}
@@ -204,8 +203,8 @@ func cmdRead(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer e.Shutdown()
-	view, err := e.Read(fs.Arg(0))
+	defer func() { _ = e.Shutdown() }()
+	view, err := e.Read(context.Background(), fs.Arg(0))
 	if err != nil {
 		return err
 	}
@@ -228,8 +227,8 @@ func cmdClose(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer e.Shutdown()
-	view, err := e.Close(fs.Arg(0), *note)
+	defer func() { _ = e.Shutdown() }()
+	view, err := e.Close(context.Background(), fs.Arg(0), *note)
 	if err != nil {
 		return err
 	}
@@ -249,20 +248,20 @@ func cmdList(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer e.Shutdown()
+	defer func() { _ = e.Shutdown() }()
 	dir := ""
 	if fs.NArg() > 0 {
 		dir = fs.Arg(0)
 	}
-	list, err := e.List(dir, *limit)
+	list, err := e.List(context.Background(), dir, *limit)
 	if err != nil {
 		return err
 	}
 	if *asJSON {
 		return jsonOut(list)
 	}
-	for _, c := range list {
-		fmt.Printf("%s  %-7s %s\n", c.ID, c.Status, c.Topic)
+	for i := range list {
+		fmt.Printf("%s  %-7s %s\n", list[i].ID, list[i].Status, list[i].Topic)
 	}
 	return nil
 }
@@ -275,8 +274,8 @@ func cmdSession(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer e.Shutdown()
-	if err := e.ResetSession(args[1], ""); err != nil {
+	defer func() { _ = e.Shutdown() }()
+	if err := e.ResetSession(context.Background(), args[1], ""); err != nil {
 		return err
 	}
 	fmt.Printf("session for %s cleared; the next turn starts with no prior context\n", args[1])
@@ -311,10 +310,10 @@ func integrations(exe string) []integration {
 			name: "claude", bin: "claude",
 			manual: fmt.Sprintf("claude mcp add --scope user parley -e PARLEY_IDENTITY=claude -- %s mcp", exe),
 			apply: func(exe string) error {
-				_ = exec.Command("claude", "mcp", "remove", "--scope", "user", "parley").Run()
-				out, err := exec.Command("claude", "mcp", "add", "--scope", "user", "parley", "-e", "PARLEY_IDENTITY=claude", "--", exe, "mcp").CombinedOutput()
+				_ = exec.CommandContext(context.Background(), "claude", "mcp", "remove", "--scope", "user", "parley").Run()
+				out, err := exec.CommandContext(context.Background(), "claude", "mcp", "add", "--scope", "user", "parley", "-e", "PARLEY_IDENTITY=claude", "--", exe, "mcp").CombinedOutput()
 				if err != nil {
-					return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+					return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
 				}
 				return nil
 			},
@@ -398,23 +397,38 @@ func cmdSetup(args []string) error {
 		fmt.Printf("no participants; harnesses found on PATH: %s\n", joinNames(detected))
 	}
 	if *write {
-		var added []string
-		for name, p := range detected {
-			if _, ok := cfg.Participants[name]; !ok {
-				cfg.Participants[name] = p
-				added = append(added, name)
-			}
-		}
-		if len(added) > 0 {
-			sort.Strings(added)
-			if err := cfg.Save(); err != nil {
-				return err
-			}
-			fmt.Printf("participants added: %s\n", strings.Join(added, ", "))
+		if err := addDetected(cfg, detected); err != nil {
+			return err
 		}
 	}
 	fmt.Println()
+	printParticipants(cfg)
+	fmt.Println()
+	printIntegrations(exe, *write)
+	installSkills(*write)
+	return nil
+}
 
+func addDetected(cfg config.Config, detected map[string]config.Participant) error {
+	var added []string
+	for name, p := range detected {
+		if _, ok := cfg.Participants[name]; !ok {
+			cfg.Participants[name] = p
+			added = append(added, name)
+		}
+	}
+	if len(added) == 0 {
+		return nil
+	}
+	sort.Strings(added)
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	fmt.Printf("participants added: %s\n", strings.Join(added, ", "))
+	return nil
+}
+
+func printParticipants(cfg config.Config) {
 	for _, p := range sortedNames(cfg.Participants) {
 		bin := ""
 		if s, _, err := cfg.Spec(p); err == nil {
@@ -426,14 +440,15 @@ func cmdSetup(args []string) error {
 			fmt.Printf("  missing %s (%s is not on PATH)\n", p, bin)
 		}
 	}
+}
 
-	fmt.Println()
+func printIntegrations(exe string, write bool) {
 	for _, in := range integrations(exe) {
 		if _, err := exec.LookPath(in.bin); err != nil {
 			continue
 		}
 		fmt.Printf("%s: %s\n", in.name, in.manual)
-		if !*write || in.apply == nil {
+		if !write || in.apply == nil {
 			continue
 		}
 		if err := in.apply(exe); err != nil {
@@ -442,20 +457,21 @@ func cmdSetup(args []string) error {
 			fmt.Println("  configured")
 		}
 	}
+}
 
-	if *write {
-		for name, err := range skills.Install() {
+func installSkills(write bool) {
+	if write {
+		for name, err := range installSkillFiles() {
 			if err != nil {
 				fmt.Printf("skill %s: %v\n", name, err)
 			} else {
 				fmt.Printf("parley skill installed for %s\n", name)
 			}
 		}
-	} else {
-		fmt.Println("parley skill: copied into the skill directory of every detected harness")
-		fmt.Println("\n(nothing written; run `parley setup --write` to apply)")
+		return
 	}
-	return nil
+	fmt.Println("parley skill: copied into the skill directory of every detected harness")
+	fmt.Println("\n(nothing written; run `parley setup --write` to apply)")
 }
 
 func joinNames(m map[string]config.Participant) string {
@@ -538,6 +554,7 @@ func opencodeConfigPath() string {
 }
 
 func patchOpencode(path, exe string) error {
+	info, statErr := os.Stat(path)
 	raw, err := os.ReadFile(path)
 	existed := err == nil
 	if os.IsNotExist(err) {
@@ -552,7 +569,7 @@ func patchOpencode(path, exe string) error {
 		return fmt.Errorf("the config has a format I cannot touch without breaking it: %w", err)
 	}
 	if existed {
-		if err := os.WriteFile(path+".bak", raw, 0o644); err != nil {
+		if err := os.WriteFile(path+".bak", raw, 0o600); err != nil { //nolint:gosec // fixed path under the user config dir
 			return err
 		}
 	}
@@ -576,7 +593,12 @@ func patchOpencode(path, exe string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(out, '\n'), 0o644)
+	mode := os.FileMode(0o600)
+	if statErr == nil {
+		mode = info.Mode().Perm() // keep the mode of the file the user already owns
+	}
+	return os.WriteFile(path, append(out, '\n'), mode) //nolint:gosec // preserving the user's own file mode
+
 }
 
 func sortedNames(m map[string]config.Participant) []string {
