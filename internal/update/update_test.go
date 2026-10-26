@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -180,5 +181,33 @@ func TestAssetName(t *testing.T) {
 	}
 	if AssetName("windows", "amd64") != "parley_windows_amd64.zip" {
 		t.Fatal(AssetName("windows", "amd64"))
+	}
+}
+
+func TestLatestSendsToken(t *testing.T) {
+	var gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.3.0", "assets": []any{}})
+	}))
+	defer srv.Close()
+
+	c := &Client{Owner: "o", Repo: "r", HTTP: srv.Client(), APIBase: srv.URL, GOOS: "linux", GOARCH: "amd64", Token: "secret"}
+	_, _ = c.Latest(context.Background())
+	if gotAuth != "Bearer secret" {
+		t.Fatalf("authorization header: %q", gotAuth)
+	}
+}
+
+func TestRateLimitHint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := &Client{Owner: "o", Repo: "r", HTTP: srv.Client(), APIBase: srv.URL, GOOS: "linux", GOARCH: "amd64"}
+	_, err := c.Latest(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN") {
+		t.Fatalf("expected a token hint, got %v", err)
 	}
 }

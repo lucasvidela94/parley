@@ -42,16 +42,24 @@ type Client struct {
 	APIBase     string
 	GOOS        string
 	GOARCH      string
+	// Token is optional. Without it GitHub rate-limits by IP, which is easy to
+	// hit behind a shared address.
+	Token string
 }
 
 func New(owner, repo string) *Client {
-	return &Client{
+	c := &Client{
 		Owner: owner, Repo: repo,
 		HTTP:    &http.Client{Timeout: 90 * time.Second},
 		APIBase: defaultAPI,
 		GOOS:    runtime.GOOS,
 		GOARCH:  runtime.GOARCH,
+		Token:   os.Getenv("GITHUB_TOKEN"),
 	}
+	if c.Token == "" {
+		c.Token = os.Getenv("GH_TOKEN")
+	}
+	return c
 }
 
 // Latest finds the newest release and the asset for this platform, with its
@@ -175,16 +183,33 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) error {
 		return err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "parley")
+	c.authorize(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("github: %s", resp.Status)
+	if err := statusError(resp); err != nil {
+		return err
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *Client) authorize(req *http.Request) {
+	req.Header.Set("User-Agent", "parley")
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+}
+
+func statusError(resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("github: %s (rate limited; export GITHUB_TOKEN or GH_TOKEN and retry)", resp.Status)
+	}
+	return fmt.Errorf("github: %s", resp.Status)
 }
 
 func (c *Client) checksum(ctx context.Context, url, asset string) (string, error) {
@@ -192,14 +217,14 @@ func (c *Client) checksum(ctx context.Context, url, asset string) (string, error
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "parley")
+	c.authorize(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("checksums: %s", resp.Status)
+	if err := statusError(resp); err != nil {
+		return "", err
 	}
 	sc := bufio.NewScanner(resp.Body)
 	for sc.Scan() {
@@ -223,14 +248,14 @@ func (c *Client) download(ctx context.Context, url string, dst io.Writer) (strin
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "parley")
+	c.authorize(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download: %s", resp.Status)
+	if err := statusError(resp); err != nil {
+		return "", err
 	}
 	h := sha256.New()
 	if _, err := io.Copy(io.MultiWriter(dst, h), resp.Body); err != nil {
