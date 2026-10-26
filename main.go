@@ -321,7 +321,7 @@ func integrations(exe string) []integration {
 		},
 		{
 			name: "opencode", bin: "opencode",
-			manual: fmt.Sprintf("mcp.servers.parley = {type:local, command:[%q,\"mcp\"], environment:{PARLEY_IDENTITY:\"opencode\"}} en %s", exe, opencodeConfigPath()),
+			manual: fmt.Sprintf("mcp.servers.parley = {type:local, command:[%q,\"mcp\"], environment:{PARLEY_IDENTITY:\"opencode\"}} in %s", exe, opencodeConfigPath()),
 			apply:  func(exe string) error { return patchOpencode(opencodeConfigPath(), exe) },
 		},
 		{

@@ -16,7 +16,7 @@ func (v View) Markdown() string {
 	for _, m := range v.Messages {
 		switch m.Kind {
 		case "note":
-			fmt.Fprintf(&b, "\n> nota de %s: %s\n", m.Author, strings.TrimSpace(m.Body))
+			fmt.Fprintf(&b, "\n> note from %s: %s\n", m.Author, strings.TrimSpace(m.Body))
 		case "error":
 			fmt.Fprintf(&b, "\n**[error from %s]** %s\n", m.Author, oneLine(m.Body, 300))
 		default:
