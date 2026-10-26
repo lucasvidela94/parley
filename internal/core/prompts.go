@@ -59,9 +59,9 @@ func historyText(msgs []store.Message) string {
 		fmt.Fprintf(&b, "\n[%s]\n%s\n", label, strings.TrimSpace(m.Body))
 	}
 	out := b.String()
-	const max = 16000
-	if len(out) <= max {
+	const limit = 16000
+	if len(out) <= limit {
 		return strings.TrimSpace(out)
 	}
-	return "… (truncated) …\n" + out[len(out)-(max-20):]
+	return "… (truncated) …\n" + out[len(out)-(limit-20):]
 }

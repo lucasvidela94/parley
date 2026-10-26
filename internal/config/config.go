@@ -117,14 +117,14 @@ func (c *Config) normalize() {
 
 func (c Config) Save() error {
 	c.normalize()
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(c.path), 0o750); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.path, append(raw, '\n'), 0o644)
+	return os.WriteFile(c.path, append(raw, '\n'), 0o600)
 }
 
 func (c Config) Path() string { return c.path }

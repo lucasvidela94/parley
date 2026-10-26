@@ -39,7 +39,7 @@ type rpcError struct {
 
 // Serve reads newline-delimited JSON-RPC from in and answers on out. Logs go to
 // logw; stdout is protocol only.
-func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer, logw io.Writer) error {
+func (s *Server) Serve(ctx context.Context, in io.Reader, out, logw io.Writer) error {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	enc := json.NewEncoder(out)
@@ -52,7 +52,7 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer, logw io
 		}
 		var req request
 		if err := json.Unmarshal([]byte(line), &req); err != nil {
-			fmt.Fprintf(logw, "parley: invalid request: %v\n", err)
+			_, _ = fmt.Fprintf(logw, "parley: invalid request: %v\n", err)
 			continue
 		}
 		if len(req.ID) == 0 {
@@ -123,13 +123,14 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 	case "participants":
 		parts := s.e.Participants()
 		lines := make([]string, 0, len(parts))
-		for _, p := range parts {
+		for i := range parts {
+			p := parts[i]
 			lines = append(lines, fmt.Sprintf("- %s (%s, %s, %s)", p["name"], p["harness"], defaultStr(p["model"], "harness default"), p["permission"]))
 		}
 		return "Local identity: " + s.e.Identity() + "\nParticipants:\n" + strings.Join(lines, "\n"), nil
 
 	case "open_conversation":
-		view, err := s.e.Open(str(a, "topic"), str(a, "context"))
+		view, err := s.e.Open(ctx, str(a, "topic"), str(a, "context"))
 		if err != nil {
 			return "", err
 		}
@@ -156,21 +157,21 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 		return out, nil
 
 	case "read_conversation":
-		view, err := s.e.Read(str(a, "id"))
+		view, err := s.e.Read(ctx, str(a, "id"))
 		if err != nil {
 			return "", err
 		}
 		return view.Markdown(), nil
 
 	case "close_conversation":
-		view, err := s.e.Close(str(a, "id"), str(a, "note"))
+		view, err := s.e.Close(ctx, str(a, "id"), str(a, "note"))
 		if err != nil {
 			return "", err
 		}
 		return view.Markdown(), nil
 
 	case "list_conversations":
-		list, err := s.e.List(str(a, "dir"), integer(a, "limit"))
+		list, err := s.e.List(ctx, str(a, "dir"), integer(a, "limit"))
 		if err != nil {
 			return "", err
 		}
@@ -178,8 +179,8 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 			return "no conversations", nil
 		}
 		var b strings.Builder
-		for _, c := range list {
-			fmt.Fprintf(&b, "%s  %-7s %s\n", c.ID, c.Status, c.Topic)
+		for i := range list {
+			fmt.Fprintf(&b, "%s  %-7s %s\n", list[i].ID, list[i].Status, list[i].Topic)
 		}
 		return b.String(), nil
 	}

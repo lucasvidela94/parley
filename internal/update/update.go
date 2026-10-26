@@ -22,7 +22,12 @@ import (
 	"time"
 )
 
-const defaultAPI = "https://api.github.com"
+const (
+	defaultAPI = "https://api.github.com"
+	// maxBinarySize bounds what an archive may unpack, so a malicious release
+	// cannot fill the disk.
+	maxBinarySize = 256 << 20
+)
 
 type Release struct {
 	Tag    string
@@ -97,8 +102,8 @@ func (c *Client) Install(ctx context.Context, rel Release, target string) error 
 	if err != nil {
 		return err
 	}
-	defer os.Remove(asset.Name())
-	defer asset.Close()
+	defer func() { _ = os.Remove(asset.Name()) }()
+	defer func() { _ = asset.Close() }()
 
 	sum, err := c.download(ctx, rel.URL, asset)
 	if err != nil {
@@ -116,8 +121,8 @@ func (c *Client) Install(ctx context.Context, rel Release, target string) error 
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	defer tmp.Close()
+	defer func() { _ = os.Remove(tmpName) }()
+	defer func() { _ = tmp.Close() }()
 
 	if err := extract(asset.Name(), BinaryName(), tmp); err != nil {
 		return err
@@ -125,7 +130,7 @@ func (c *Client) Install(ctx context.Context, rel Release, target string) error 
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o755); err != nil {
+	if err := os.Chmod(tmpName, 0o755); err != nil { //nolint:gosec // an updated binary must be executable
 		return err
 	}
 	if err := os.Rename(tmpName, target); err != nil {
@@ -165,7 +170,7 @@ func BinaryName() string {
 }
 
 func (c *Client) getJSON(ctx context.Context, url string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return err
 	}
@@ -175,7 +180,7 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("github: %s", resp.Status)
 	}
@@ -183,7 +188,7 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) error {
 }
 
 func (c *Client) checksum(ctx context.Context, url, asset string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -192,7 +197,7 @@ func (c *Client) checksum(ctx context.Context, url, asset string) (string, error
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("checksums: %s", resp.Status)
 	}
@@ -214,7 +219,7 @@ func (c *Client) checksum(ctx context.Context, url, asset string) (string, error
 }
 
 func (c *Client) download(ctx context.Context, url string, dst io.Writer) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return "", err
 	}
@@ -223,7 +228,7 @@ func (c *Client) download(ctx context.Context, url string, dst io.Writer) (strin
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("download: %s", resp.Status)
 	}
@@ -248,12 +253,12 @@ func extractTarGz(path, want string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return err
 	}
-	defer gz.Close()
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	for {
 		h, err := tr.Next()
@@ -266,7 +271,10 @@ func extractTarGz(path, want string, out io.Writer) error {
 		if h.Typeflag != tar.TypeReg || filepath.Base(h.Name) != want {
 			continue
 		}
-		_, err = io.Copy(out, tr)
+		if h.Size > maxBinarySize {
+			return fmt.Errorf("%s is larger than %d bytes", want, maxBinarySize)
+		}
+		_, err = io.CopyN(out, tr, h.Size)
 		return err
 	}
 }
@@ -276,17 +284,20 @@ func extractZip(path, want string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	for _, f := range zr.File {
 		if filepath.Base(f.Name) != want {
 			continue
+		}
+		if f.UncompressedSize64 > maxBinarySize {
+			return fmt.Errorf("%s is larger than %d bytes", want, maxBinarySize)
 		}
 		rc, err := f.Open()
 		if err != nil {
 			return err
 		}
-		defer rc.Close()
-		_, err = io.Copy(out, rc)
+		_, err = io.CopyN(out, rc, int64(f.UncompressedSize64))
+		_ = rc.Close()
 		return err
 	}
 	return fmt.Errorf("%s not found in %s", want, filepath.Base(path))

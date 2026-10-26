@@ -112,7 +112,7 @@ func TestSendEphemeral(t *testing.T) {
 	if res.Conversation.Status != "closed" {
 		t.Fatalf("ephemeral should be closed: %s", res.Conversation.Status)
 	}
-	view, err := env.e.Read(res.Conversation.ID)
+	view, err := env.e.Read(context.Background(), res.Conversation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestSendEphemeral(t *testing.T) {
 
 func TestConversationFlow(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"first", "second"}})
-	view, err := env.e.Open("choose a cache", "repo at /tmp/x")
+	view, err := env.e.Open(context.Background(), "choose a cache", "repo at /tmp/x")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestConversationFlow(t *testing.T) {
 	if p := env.fakes["claude"].lastPrompt(); !strings.Contains(p, "Redis or in-memory?") || !strings.Contains(p, "first") {
 		t.Fatalf("recipient did not see the history:\n%s", p)
 	}
-	view, err = env.e.Close(id, "keep memory, benchmark pending")
+	view, err = env.e.Close(context.Background(), id, "keep memory, benchmark pending")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestSendErrorIsRecordedAndReturned(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if _, rerr := env.e.Read(res.Conversation.ID); rerr != nil {
+	if _, rerr := env.e.Read(context.Background(), res.Conversation.ID); rerr != nil {
 		t.Fatal(rerr)
 	}
 }
@@ -184,7 +184,7 @@ func TestSendRetriesFreshSession(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"ERR:No conversation found with session ID abc", "fresh answer"}})
 	dir, _ := os.Getwd()
 	env.e.cfg.Participants["claude"] = config.Participant{Harness: "claude", Dir: dir}
-	if err := env.e.st.SetSession("claude", dir, "abc"); err != nil {
+	if err := env.e.st.SetSession(context.Background(), "claude", dir, "abc"); err != nil {
 		t.Fatal(err)
 	}
 	res, err := env.e.Send(context.Background(), SendRequest{To: "claude", Message: "q"})
@@ -197,7 +197,7 @@ func TestSendRetriesFreshSession(t *testing.T) {
 	if f := env.fakes["claude"]; f.cont != 1 || f.started != 1 {
 		t.Fatalf("cont=%d started=%d", f.cont, f.started)
 	}
-	sid, _, _ := env.e.st.Session("claude", dir)
+	sid, _, _ := env.e.st.Session(context.Background(), "claude", dir)
 	if sid == "abc" {
 		t.Fatal("did not store the new session")
 	}
