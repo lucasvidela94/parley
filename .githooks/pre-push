@@ -1,0 +1,4 @@
+#!/bin/sh
+# Full gate before publishing: everything CI runs, minus the vulnerability DB.
+set -eu
+make check

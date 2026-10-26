@@ -1,0 +1,89 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - errorlint
+    - govet
+    - staticcheck
+    - gosec
+    - noctx
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    - contextcheck
+    - gocritic
+    - revive
+    - unused
+    - ineffassign
+    - cyclop
+    - dupl
+    - forbidigo
+    - depguard
+    - testifylint
+    - paralleltest
+
+  settings:
+    cyclop:
+      max-complexity: 18
+    dupl:
+      threshold: 150
+    forbidigo:
+      forbid:
+        - pattern: '^panic$'
+          msg: "return an error instead of panicking"
+        - pattern: '^log\.Fatal'
+          msg: "return the error to the caller"
+    depguard:
+      rules:
+        main:
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/lucasvidela94/parley
+            - modernc.org/sqlite
+    revive:
+      rules:
+        - name: var-naming
+        - name: indent-error-flow
+        - name: errorf
+        - name: error-return
+        - name: context-as-argument
+        - name: unreachable-code
+        - name: superfluous-else
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+      disabled-checks:
+        - whyNoLint
+        # Config structs are passed by value on purpose; this is a CLI, not a hot path.
+        - hugeParam
+        # Named results add noise to the two-value returns used across the store.
+        - unnamedResult
+    gosec:
+      excludes:
+        - G204 # subprocess with a variable is the point: harness binaries are configured
+        - G304 # reading a path from config is the point
+
+  exclusions:
+    generated: lax
+    rules:
+      # Tests mutate process env and the working directory, so they cannot run in
+      # parallel, and duplicated setup is clearer than a shared helper.
+      - path: _test\.go
+        linters: [dupl, paralleltest, gosec, errcheck, noctx, bodyclose]
+
+# wrapcheck is deliberately absent. On this codebase it only reports errors that
+# already carry a domain message ("conversation not found: cnv_x"), so wrapping
+# them again adds noise without information. errorlint still enforces %w, and
+# AGENTS.md states the wrapping rule at package boundaries.
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
