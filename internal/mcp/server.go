@@ -124,7 +124,7 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 		parts := s.e.Participants()
 		lines := make([]string, 0, len(parts))
 		for _, p := range parts {
-			lines = append(lines, fmt.Sprintf("- %s (%s, %s, %s)", p["name"], p["harness"], defaultStr(p["model"], "modelo default"), p["permission"]))
+			lines = append(lines, fmt.Sprintf("- %s (%s, %s, %s)", p["name"], p["harness"], defaultStr(p["model"], "harness default"), p["permission"]))
 		}
 		return "Local identity: " + s.e.Identity() + "\nParticipants:\n" + strings.Join(lines, "\n"), nil
 
