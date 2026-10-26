@@ -1,0 +1,4 @@
+/parley
+*.db
+*.db-wal
+*.db-shm
