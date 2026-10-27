@@ -14,6 +14,10 @@ type Reply struct {
 	Text      string
 	SessionID string
 	CostUSD   float64
+	// InputTokens and OutputTokens are what the harness reported for the turn,
+	// 0 when it said nothing. They are not normalised across harnesses.
+	InputTokens  int
+	OutputTokens int
 	// Model is what the harness says it ran, when its output says so. Empty
 	// means unknown, never a guess.
 	Model string
@@ -57,7 +61,12 @@ type Spec struct {
 	ErrorPath      string `json:"error_path,omitempty"`
 	ErrorEventType string `json:"error_event_type,omitempty"`
 	ErrorBoolPath  string `json:"error_bool_path,omitempty"`
-	CostPath       string `json:"cost_path,omitempty"`
+	// CostPath, InputUsagePath and OutputUsagePath locate the turn's cost and
+	// token counts. In jsonl output every line that has the field counts and the
+	// values add up (opencode reports one per step); in json there is one object.
+	CostPath        string `json:"cost_path,omitempty"`
+	InputUsagePath  string `json:"input_tokens_path,omitempty"`
+	OutputUsagePath string `json:"output_tokens_path,omitempty"`
 	// ErrorHints maps a fragment of the CLI's stderr to advice appended to the
 	// error when the command fails with it.
 	ErrorHints map[string]string `json:"error_hints,omitempty"`
@@ -130,11 +139,15 @@ var profiles = map[string]Spec{
 		TextFilterPath:   "type",
 		TextFilterEquals: "text",
 		ErrorEventType:   "error",
-		ModelArgs:        []string{"--model", "{model}"},
-		ModelsArgs:       []string{"models"},
-		ReadOnlyArgs:     []string{"--agent", "plan"},
-		Verified:         true,
-		Notes:            "no MCP server mode; expose through the CLI or the v2 HTTP API",
+		// One step_finish per model call; a turn with tools has several.
+		CostPath:        "part.cost",
+		InputUsagePath:  "part.tokens.input",
+		OutputUsagePath: "part.tokens.output",
+		ModelArgs:       []string{"--model", "{model}"},
+		ModelsArgs:      []string{"models"},
+		ReadOnlyArgs:    []string{"--agent", "plan"},
+		Verified:        true,
+		Notes:           "no MCP server mode; expose through the CLI or the v2 HTTP API",
 	},
 	"codex": {
 		Bin:              "codex",
@@ -148,6 +161,8 @@ var profiles = map[string]Spec{
 		TextFilterEquals: "agent_message",
 		ErrorEventType:   "turn.failed",
 		ErrorPath:        "error.message",
+		InputUsagePath:   "usage.input_tokens",
+		OutputUsagePath:  "usage.output_tokens",
 		ModelArgs:        []string{"-m", "{model}"},
 		// `exec resume` has no --sandbox flag; the config override works on
 		// both `exec` and `exec resume`.
@@ -156,14 +171,16 @@ var profiles = map[string]Spec{
 		Notes:        "verified against codex-cli 0.163.0: thread.started carries thread_id, item.completed/agent_message the text, and exec resume keeps the thread; the turn.failed event was not forced",
 	},
 	"cursor": {
-		Bin:           "cursor-agent",
-		Start:         []string{"-p", "--output-format", "json"},
-		Continue:      []string{"-p", "--output-format", "json", "--resume", "{session}"},
-		Prompt:        "arg",
-		Session:       "output:session_id",
-		Output:        "json",
-		TextPath:      "result",
-		ErrorBoolPath: "is_error",
+		Bin:             "cursor-agent",
+		Start:           []string{"-p", "--output-format", "json"},
+		Continue:        []string{"-p", "--output-format", "json", "--resume", "{session}"},
+		Prompt:          "arg",
+		Session:         "output:session_id",
+		Output:          "json",
+		TextPath:        "result",
+		ErrorBoolPath:   "is_error",
+		InputUsagePath:  "usage.inputTokens",
+		OutputUsagePath: "usage.outputTokens",
 		ErrorHints: map[string]string{
 			"Workspace Trust Required": `run cursor-agent once in that directory and accept the prompt, or add "args": ["--trust"] to the participant`,
 		},
@@ -269,6 +286,9 @@ func (s Spec) Parse(stdout string) (Reply, error) {
 	switch s.Output {
 	case "text":
 		rep.Text = strings.TrimSpace(stdout)
+		if rep.Text == "" {
+			return rep, errors.New("reply has no text (stdout empty)")
+		}
 		return rep, nil
 	case "json":
 		return s.parseJSON(stdout)
@@ -293,6 +313,7 @@ func (s Spec) parseJSON(stdout string) (Reply, error) {
 	if s.CostPath != "" {
 		rep.CostUSD, _ = floatAt(obj, s.CostPath)
 	}
+	s.addTokens(&rep, obj)
 	rep.Model = keysAt(obj, s.ModelKeysPath)
 	if rep.Text == "" {
 		return rep, fmt.Errorf("reply has no text (%s empty)", s.TextPath)
@@ -321,6 +342,7 @@ func (s Spec) parseJSONL(stdout string) (Reply, error) {
 		if rep.SessionID == "" {
 			rep.SessionID = s.sessionFrom(obj)
 		}
+		s.addUsage(&rep, obj)
 		if s.TextFilterPath != "" && strAt(obj, s.TextFilterPath) != s.TextFilterEquals {
 			continue
 		}
@@ -333,6 +355,24 @@ func (s Spec) parseJSONL(stdout string) (Reply, error) {
 		return rep, fmt.Errorf("reply has no text (%s empty)", s.TextPath)
 	}
 	return rep, nil
+}
+
+// addTokens adds the token counts found in obj to rep.
+func (s Spec) addTokens(rep *Reply, obj map[string]any) {
+	if n, ok := floatAt(obj, s.InputUsagePath); ok {
+		rep.InputTokens += int(n)
+	}
+	if n, ok := floatAt(obj, s.OutputUsagePath); ok {
+		rep.OutputTokens += int(n)
+	}
+}
+
+// addUsage adds the cost and tokens found in one jsonl line to rep.
+func (s Spec) addUsage(rep *Reply, obj map[string]any) {
+	if c, ok := floatAt(obj, s.CostPath); ok {
+		rep.CostUSD += c
+	}
+	s.addTokens(rep, obj)
 }
 
 func (s Spec) checkError(obj map[string]any) error {

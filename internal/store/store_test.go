@@ -78,6 +78,32 @@ func TestConversationRoundtrip(t *testing.T) {
 	}
 }
 
+func TestMessageKeepsItsUsage(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	c := Conversation{ID: NewID("cnv"), Topic: "t", Status: "open", CreatedAt: now, UpdatedAt: now}
+	if err := s.CreateConversation(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMessage(ctx, Message{ConversationID: c.ID, Author: "a", Kind: "message", Body: "x", InputTokens: 120, OutputTokens: 7, CostUSD: 0.01}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddMessage(ctx, Message{ConversationID: c.ID, Author: "b", Kind: "message", Body: "y"}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := s.Messages(ctx, c.ID)
+	if err != nil || len(msgs) != 2 {
+		t.Fatalf("%d %v", len(msgs), err)
+	}
+	if msgs[0].InputTokens != 120 || msgs[0].OutputTokens != 7 || msgs[0].CostUSD != 0.01 {
+		t.Fatalf("usage lost on the way: %+v", msgs[0])
+	}
+	if msgs[1].InputTokens != 0 || msgs[1].OutputTokens != 0 {
+		t.Fatalf("a message with no usage must stay at zero: %+v", msgs[1])
+	}
+}
+
 func TestOpenMigratesAnOlderStore(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "old.db")
 	db, err := sql.Open("sqlite", "file:"+path)
@@ -112,6 +138,10 @@ INSERT INTO messages VALUES ('msg_old','cnv_old','self','message','hi',0,'2026-0
 	msgs, err := s.Messages(ctx, "cnv_old")
 	if err != nil || len(msgs) != 1 || msgs[0].Body != "hi" {
 		t.Fatalf("%+v %v", msgs, err)
+	}
+	// The columns added later must be writable on a store the first release made.
+	if err := s.AddMessage(ctx, Message{ConversationID: "cnv_old", Author: "x", Kind: "message", Body: "new", InputTokens: 3, OutputTokens: 4}); err != nil {
+		t.Fatalf("an older store must accept usage after migrating: %v", err)
 	}
 }
 

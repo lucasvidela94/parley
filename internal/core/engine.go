@@ -270,7 +270,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	if model == "" {
 		model = rep.Model
 	}
-	reply := store.Message{ConversationID: conv.ID, Author: req.To, Kind: "message", Model: model, Body: rep.Text, CostUSD: rep.CostUSD}
+	reply := store.Message{ConversationID: conv.ID, Author: req.To, Kind: "message", Model: model, Body: rep.Text, CostUSD: rep.CostUSD, InputTokens: rep.InputTokens, OutputTokens: rep.OutputTokens}
 	// The answer is paid for: a signal that lands after it arrives must not
 	// keep it out of the transcript.
 	ctx = context.WithoutCancel(ctx)

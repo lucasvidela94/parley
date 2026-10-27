@@ -28,14 +28,19 @@ type Conversation struct {
 }
 
 type Message struct {
-	ID             string    `json:"id"`
-	ConversationID string    `json:"conversation_id"`
-	Author         string    `json:"author"`
-	Kind           string    `json:"kind"`            // message | note | error
-	Model          string    `json:"model,omitempty"` // the participant's configured model, when set
-	Body           string    `json:"body"`
-	CostUSD        float64   `json:"cost_usd,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string  `json:"id"`
+	ConversationID string  `json:"conversation_id"`
+	Author         string  `json:"author"`
+	Kind           string  `json:"kind"`            // message | note | error
+	Model          string  `json:"model,omitempty"` // the participant's configured model, when set
+	Body           string  `json:"body"`
+	CostUSD        float64 `json:"cost_usd,omitempty"`
+	// Tokens exactly as the harness reported them; 0 means it said nothing.
+	// Harnesses count cache tokens differently, so they do not add up across
+	// participants.
+	InputTokens  int       `json:"input_tokens,omitempty"`
+	OutputTokens int       `json:"output_tokens,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // RunningTurn is a harness call in progress, recorded so another process can
@@ -114,6 +119,8 @@ CREATE TABLE IF NOT EXISTS running_turns (
 		{"conversations", "max_turns", "INTEGER NOT NULL DEFAULT 0"},
 		{"conversations", "turns", "INTEGER NOT NULL DEFAULT 0"},
 		{"messages", "model", "TEXT NOT NULL DEFAULT ''"},
+		{"messages", "input_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"messages", "output_tokens", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.addColumn(ctx, c.table, c.column, c.decl); err != nil {
 			return err
@@ -194,8 +201,8 @@ func (s *Store) AddMessage(ctx context.Context, m Message) error {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO messages(id,conversation_id,author,kind,model,body,cost_usd,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		m.ID, m.ConversationID, m.Author, m.Kind, m.Model, m.Body, m.CostUSD, ts(m.CreatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO messages(id,conversation_id,author,kind,model,body,cost_usd,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.ConversationID, m.Author, m.Kind, m.Model, m.Body, m.CostUSD, m.InputTokens, m.OutputTokens, ts(m.CreatedAt))
 	if err == nil {
 		_, _ = s.db.ExecContext(ctx, `UPDATE conversations SET updated_at=? WHERE id=?`, ts(time.Now().UTC()), m.ConversationID)
 	}
@@ -203,7 +210,7 @@ func (s *Store) AddMessage(ctx context.Context, m Message) error {
 }
 
 func (s *Store) Messages(ctx context.Context, conversationID string) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,author,kind,model,body,cost_usd,created_at FROM messages WHERE conversation_id=? ORDER BY created_at, rowid`, conversationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,author,kind,model,body,cost_usd,input_tokens,output_tokens,created_at FROM messages WHERE conversation_id=? ORDER BY created_at, rowid`, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +219,7 @@ func (s *Store) Messages(ctx context.Context, conversationID string) ([]Message,
 	for rows.Next() {
 		var m Message
 		var created string
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Author, &m.Kind, &m.Model, &m.Body, &m.CostUSD, &created); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Author, &m.Kind, &m.Model, &m.Body, &m.CostUSD, &m.InputTokens, &m.OutputTokens, &created); err != nil {
 			return nil, err
 		}
 		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)

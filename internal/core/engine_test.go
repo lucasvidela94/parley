@@ -29,6 +29,8 @@ type fake struct {
 	cont    int
 	running chan struct{}
 	reports string // the model the harness says it used, like claude does
+
+	tokensIn, tokensOut int // usage the harness reports, 0 = nothing
 }
 
 func (f *fake) Name() string       { return f.name }
@@ -58,7 +60,7 @@ func (f *fake) reply(ctx context.Context, prompt string, o harness.Options, cont
 	case strings.HasPrefix(out, "ERR:"):
 		return harness.Reply{}, errors.New(strings.TrimPrefix(out, "ERR:"))
 	}
-	return harness.Reply{Text: out, Model: f.reports}, nil
+	return harness.Reply{Text: out, Model: f.reports, InputTokens: f.tokensIn, OutputTokens: f.tokensOut}, nil
 }
 
 func (f *fake) Start(ctx context.Context, prompt string, o harness.Options) (harness.Reply, error) {
@@ -739,6 +741,33 @@ func TestModelOverrideGetsItsOwnSession(t *testing.T) {
 	send("opus")
 	if f.started != 4 {
 		t.Fatalf("reset must clear the override sessions too: started=%d", f.started)
+	}
+}
+
+func TestUsageIsKeptPerMessageAndNeverSummedAcrossHarnesses(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"one"}, "opencode": {"two"}})
+	env.fakes["claude"].tokensIn, env.fakes["claude"].tokensOut = 9178, 134
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "usage", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	for _, to := range []string{"claude", "opencode"} {
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: to, Message: "q"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	view, _ = env.e.Read(ctx, id)
+	md := view.Markdown()
+	if !strings.Contains(md, "9178 in / 134 out") {
+		t.Fatalf("the message that reported usage must show it:\n%s", md)
+	}
+	if strings.Count(md, " in / ") != 1 {
+		t.Fatalf("a message that reported nothing must not show a made-up zero:\n%s", md)
+	}
+	if strings.Contains(strings.SplitN(md, "\n\n", 3)[1], "tokens") {
+		t.Fatalf("token counts are not comparable across harnesses, so the header must not total them:\n%s", md)
 	}
 }
 

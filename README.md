@@ -143,8 +143,12 @@ the order it first spoke.
 - Ctrl-C or `SIGTERM` on `parley send` (or on the MCP server) kills the harness too.
   `SIGKILL` cannot be caught: a harness started by a killed parley keeps running.
 - **Cancelling stops the local process, not the provider.** A request the provider already
-  received may still finish and be billed. parley has no token counts: only Claude reports a
-  cost, which `read` sums. Word limits written in a prompt are a request, not a constraint.
+  received may still finish and be billed. Cost is reported by Claude and OpenCode only, and
+  `read` sums it. Tokens are shown per message (`12024 in / 866 out`) for Cursor, Codex and
+  OpenCode, exactly as each harness counts them: caches are counted differently, so they are
+  never totalled across participants, and Claude shows none because its `input_tokens` leaves
+  the cache out. A harness that reports nothing shows nothing; parley never estimates. Word
+  limits written in a prompt are a request, not a constraint.
 
 ## Update
 
@@ -185,6 +189,7 @@ One declarative adapter, no Go required. A harness is a spec:
 | `text_path` | dotted path to the answer text (`result`, `part.text`, …) |
 | `text_filter_path` / `text_filter_equals` | for JSONL: which lines count |
 | `error_path` / `error_event_type` / `error_bool_path` | how a failure shows up |
+| `cost_path` / `input_tokens_path` / `output_tokens_path` | where the turn's cost and token counts are. In JSONL every line that has the field counts and the values add up (OpenCode reports one per step) |
 | `error_hints` | map from a fragment of the CLI's stderr to advice; when a failed command printed that fragment, the advice is appended to the error as `(hint: …)`. Cursor uses it for the workspace-trust failure |
 | `model_keys_path` | JSON output only: dotted path to an object whose keys are the models the turn used (claude's `modelUsage`). Recorded as the message's model when the participant sets none; a configured `model` wins. Cursor, codex and opencode do not report one, so their transcripts stay blank |
 | `models_args` | argv that makes the CLI print its models; `parley models <name>` runs it and shows the output as is (built in for opencode, cursor and pi) |

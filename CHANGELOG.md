@@ -7,6 +7,26 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 
 ## [Unreleased]
 
+### Added
+
+- **Usage per message** (#27). Cursor, Codex and OpenCode report their token counts and `read`
+  shows them under each reply (`12024 in / 866 out`); `read --json` has `input_tokens` and
+  `output_tokens`. New spec fields `input_tokens_path` and `output_tokens_path`; in JSONL every
+  line with the field counts, so OpenCode's several steps per turn add up.
+- **OpenCode cost.** OpenCode reports a cost per step; it is summed per reply and into the cost in
+  the `read` header, which only Claude had.
+
+### Fixed
+
+- A text-mode harness (pi, omp) that exits 0 with an empty stdout is now an error, like the JSON
+  harnesses, instead of being recorded as a reply (#35).
+
+### Known limitations
+
+- Tokens are shown exactly as each harness counts them and never totalled: harnesses account for
+  caches differently. Claude shows none, because its `input_tokens` excludes cached tokens (2 next
+  to 17079 cached in a real turn) and would understate the turn; its cost is still reported.
+
 ## [0.5.0] - 2026-10-27
 
 ### Added

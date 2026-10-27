@@ -237,6 +237,12 @@ func merge(base, over harness.Spec) harness.Spec {
 
 // mergeFlagArgs lets a participant replace the flag lists of its harness spec.
 func mergeFlagArgs(base, over harness.Spec) harness.Spec {
+	if over.InputUsagePath != "" {
+		base.InputUsagePath = over.InputUsagePath
+	}
+	if over.OutputUsagePath != "" {
+		base.OutputUsagePath = over.OutputUsagePath
+	}
 	if over.ErrorHints != nil {
 		base.ErrorHints = over.ErrorHints
 	}

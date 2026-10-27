@@ -122,8 +122,8 @@ because, with the fix, it does what it says for every built-in harness.
 ## D17 — A turn budget, not a token budget
 **Decided.** `max_turns` caps a conversation; the check and the increment are one SQL
 statement, so concurrent sends cannot both pass. A failed turn counts. Word limits and money
-budgets were left out: truncating a reply corrupts the record, and only Claude reports a cost,
-so a money cap would be enforced for one harness and decorative for the rest.
+budgets were left out: truncating a reply corrupts the record, and only Claude and OpenCode
+report a cost, so a money cap would be enforced for two harnesses and decorative for the rest.
 
 `parley cancel` flags the running turns in the store; the owning process polls every second
 and cancels its context, which kills the harness's process group. Polling the store instead of

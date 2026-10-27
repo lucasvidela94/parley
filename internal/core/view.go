@@ -75,6 +75,9 @@ func (v View) Markdown() string {
 			if m.Model != "" {
 				label += " · " + m.Model
 			}
+			if m.InputTokens > 0 || m.OutputTokens > 0 {
+				at += fmt.Sprintf(" · %d in / %d out", m.InputTokens, m.OutputTokens)
+			}
 			fmt.Fprintf(&b, "\n### %s\n_%s_\n\n%s\n", label, at, strings.TrimSpace(m.Body))
 		}
 	}

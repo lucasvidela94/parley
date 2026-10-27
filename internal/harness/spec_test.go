@@ -107,6 +107,25 @@ func TestParseTextOutput(t *testing.T) {
 	}
 }
 
+// A harness that exits 0 with nothing on stdout has not answered; recording
+// that as a reply would let silence read as a peer's position.
+func TestParseEmptyAnswerIsAnErrorInEveryOutputMode(t *testing.T) {
+	cases := []struct {
+		name string
+		spec Spec
+		out  string
+	}{
+		{"text", Spec{Output: "text"}, " \n"},
+		{"json", Spec{Output: "json", TextPath: "result"}, `{"result":""}`},
+		{"jsonl", Spec{Output: "jsonl", TextPath: "text"}, `{"type":"x"}`},
+	}
+	for _, c := range cases {
+		if _, err := c.spec.Parse(c.out); err == nil || !strings.Contains(err.Error(), "no text") {
+			t.Errorf("%s: an empty reply must be an error, got %v", c.name, err)
+		}
+	}
+}
+
 func TestParseReportsTheModelTheHarnessUsed(t *testing.T) {
 	s, _ := Known("claude")
 	rep, err := s.Parse(`{"result":"ok","modelUsage":{"claude-opus-5-5":{"inputTokens":1},"claude-haiku-5-5":{"inputTokens":1}}}`)
@@ -119,6 +138,45 @@ func TestParseReportsTheModelTheHarnessUsed(t *testing.T) {
 	rep, err = s.Parse(`{"result":"ok"}`)
 	if err != nil || rep.Model != "" {
 		t.Fatalf("a harness that says nothing must not be guessed for: %q %v", rep.Model, err)
+	}
+}
+
+// The samples are trimmed from real turns (cursor-agent 2026.10.19, codex 0.163,
+// opencode 2.1, claude), not invented.
+func TestParseUsageAsEachHarnessReportsIt(t *testing.T) {
+	cases := []struct {
+		name         string
+		out          string
+		in, out2     int
+		cost         float64
+		reportsUsage bool
+	}{
+		{"cursor", `{"type":"result","is_error":false,"result":"ok","session_id":"s","usage":{"inputTokens":9178,"outputTokens":134,"cacheReadTokens":6016}}`, 9178, 134, 0, true},
+		{"codex", `{"type":"thread.started","thread_id":"t"}
+{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}
+{"type":"turn.completed","usage":{"input_tokens":17213,"cached_input_tokens":0,"output_tokens":22}}`, 17213, 22, 0, true},
+		{"opencode", `{"type":"step_start","sessionID":"s"}
+{"type":"text","sessionID":"s","part":{"type":"text","text":"ok"}}
+{"type":"step_finish","sessionID":"s","part":{"type":"step-finish","cost":0.5,"tokens":{"input":100,"output":10}}}
+{"type":"step_finish","sessionID":"s","part":{"type":"step-finish","cost":0.25,"tokens":{"input":200,"output":20}}}`, 300, 30, 0.75, true},
+		// Claude's input_tokens leaves the cache out (2 next to 17079 cached), so
+		// it would understate the turn: no tokens, only the cost it reports.
+		{"claude", `{"result":"ok","total_cost_usd":0.07,"usage":{"input_tokens":2,"output_tokens":32,"cache_creation_input_tokens":17079}}`, 0, 0, 0.07, false},
+	}
+	for _, c := range cases {
+		s, _ := Known(c.name)
+		rep, err := s.Parse(c.out)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if rep.InputTokens != c.in || rep.OutputTokens != c.out2 || rep.CostUSD != c.cost {
+			t.Errorf("%s: tokens %d/%d cost %v, want %d/%d cost %v", c.name, rep.InputTokens, rep.OutputTokens, rep.CostUSD, c.in, c.out2, c.cost)
+		}
+	}
+	// A spec with no usage paths reports nothing; zero means unknown, never a guess.
+	rep, err := Spec{Output: "json", TextPath: "result"}.Parse(`{"result":"ok","usage":{"input_tokens":5}}`)
+	if err != nil || rep.InputTokens != 0 || rep.OutputTokens != 0 {
+		t.Fatalf("no paths, no usage: %+v %v", rep, err)
 	}
 }
 
