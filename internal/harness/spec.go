@@ -17,13 +17,14 @@ type Reply struct {
 }
 
 // Options are per-call knobs. SessionID is only used when the spec takes the
-// session as an argument.
+// session as an argument. Args is extra argv from the participant's config.
 type Options struct {
 	Model     string
 	Dir       string
 	ReadOnly  bool
 	SessionID string
 	Env       []string
+	Args      []string
 }
 
 // Spec describes how to drive one CLI agent. Everything that varies between
@@ -61,6 +62,10 @@ type Spec struct {
 	Verified bool   `json:"verified,omitempty"`
 	Notes    string `json:"notes,omitempty"`
 }
+
+// EnforcesReadOnly reports whether the spec has a flag that stops the harness
+// from editing. Without one, read-only is only a line in the prompt.
+func (s Spec) EnforcesReadOnly() bool { return len(s.ReadOnlyArgs) > 0 }
 
 // SupportsContinuity reports whether the spec can add a turn to an existing
 // session.
@@ -129,56 +134,72 @@ var profiles = map[string]Spec{
 		ErrorEventType:   "turn.failed",
 		ErrorPath:        "error.message",
 		ModelArgs:        []string{"-m", "{model}"},
-		ReadOnlyArgs:     []string{"--sandbox", "read-only"},
-		Verified:         false,
-		Notes:            "session id path and resume untested with a real turn",
+		// `exec resume` has no --sandbox flag; the config override works on
+		// both `exec` and `exec resume`.
+		ReadOnlyArgs: []string{"-c", `sandbox_mode="read-only"`},
+		Verified:     true,
+		Notes:        "verified against codex-cli 0.163.0: thread.started carries thread_id, item.completed/agent_message the text, and exec resume keeps the thread; the turn.failed event was not forced",
 	},
 	"cursor": {
-		Bin:          "cursor-agent",
-		Start:        []string{"-p", "--output-format", "json"},
-		Continue:     []string{"-p", "--output-format", "json", "--resume", "{session}"},
-		Prompt:       "arg",
-		Session:      "output:session_id",
-		Output:       "json",
-		TextPath:     "result",
-		ModelArgs:    []string{"--model", "{model}"},
-		ReadOnlyArgs: []string{"--mode", "plan"},
-		Verified:     false,
-		Notes:        "JSON shape and session id are unverified",
+		Bin:           "cursor-agent",
+		Start:         []string{"-p", "--output-format", "json"},
+		Continue:      []string{"-p", "--output-format", "json", "--resume", "{session}"},
+		Prompt:        "arg",
+		Session:       "output:session_id",
+		Output:        "json",
+		TextPath:      "result",
+		ErrorBoolPath: "is_error",
+		ModelArgs:     []string{"--model", "{model}"},
+		ReadOnlyArgs:  []string{"--mode", "plan"},
+		Verified:      true,
+		Notes:         "verified against 2026.10.19-6bbf2c4: result carries the text, session_id the session, --resume keeps it, --mode plan is accepted; the working directory must be trusted (`--trust` or an interactive run) or the CLI refuses to start, and parley does not pass --trust for you",
 	},
 	"pi": {
-		Bin:              "pi",
-		Start:            []string{"-p", "--mode", "json", "--session-id", "{session}"},
-		Continue:         []string{"-p", "--mode", "json", "--session-id", "{session}"},
-		Prompt:           "arg",
-		Session:          "arg",
-		Output:           "jsonl",
-		TextPath:         "text",
-		TextFilterPath:   "type",
-		TextFilterEquals: "text",
-		ModelArgs:        []string{"--model", "{model}"},
-		ReadOnlyArgs:     []string{"--no-tools"},
-		Verified:         false,
-		Notes:            "pi's json mode is unverified",
+		Bin: "pi",
+		// --mode text is pi's default; its json mode puts the answer in
+		// message.content[] (an array) and reports errors inside the stream
+		// with exit 0, neither of which the adapter can read.
+		Start:        []string{"-p", "--session-id", "{session}"},
+		Continue:     []string{"-p", "--session-id", "{session}"},
+		Prompt:       "arg",
+		Session:      "arg",
+		Output:       "text",
+		ModelArgs:    []string{"--model", "{model}"},
+		ReadOnlyArgs: []string{"--no-tools"},
+		Verified:     false,
+		Notes:        "flags verified against pi 1.3.0 (--session-id creates the session, --no-tools disables tools); the turn was blocked by an expired provider key, so text output is inferred from exit 1 with the error on stderr",
 	},
 }
 
-// Render substitutes placeholders and appends the prompt when the spec puts it
-// on argv. cont selects the continuation command.
-func (s Spec) Render(cont bool, prompt, session, model, dir string) []string {
+// Render builds argv: the start or continue command (cont), then the
+// permission flags (ReadOnlyArgs or WriteArgs), the model flags when a model is
+// set, the participant's extra args, and the prompt last when the spec puts it
+// on argv.
+func (s Spec) Render(cont bool, prompt string, o Options) []string {
 	src := s.Start
 	if cont {
 		src = s.Continue
 	}
-	out := make([]string, 0, len(src)+4)
+	src = append([]string{}, src...)
+	if o.ReadOnly {
+		src = append(src, s.ReadOnlyArgs...)
+	} else {
+		src = append(src, s.WriteArgs...)
+	}
+	if o.Model != "" {
+		src = append(src, s.ModelArgs...)
+	}
+	src = append(src, o.Args...)
+
+	out := make([]string, 0, len(src)+1)
 	sawPrompt := false
 	for _, a := range src {
 		if strings.Contains(a, "{prompt}") {
 			sawPrompt = true
 		}
-		a = strings.ReplaceAll(a, "{session}", session)
-		a = strings.ReplaceAll(a, "{model}", model)
-		a = strings.ReplaceAll(a, "{dir}", dir)
+		a = strings.ReplaceAll(a, "{session}", o.SessionID)
+		a = strings.ReplaceAll(a, "{model}", o.Model)
+		a = strings.ReplaceAll(a, "{dir}", o.Dir)
 		a = strings.ReplaceAll(a, "{prompt}", prompt)
 		out = append(out, a)
 	}

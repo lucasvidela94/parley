@@ -116,6 +116,39 @@ func TestServe(t *testing.T) {
 	}
 }
 
+func TestReadPagesAndCloseConfirms(t *testing.T) {
+	e := newEngine(t)
+	s := New(e, "test")
+	ctx := context.Background()
+	if _, err := s.dispatch(ctx, "open_conversation", map[string]any{"topic": "t", "max_turns": float64(5)}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := e.List(ctx, "", 1)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("%+v %v", list, err)
+	}
+	id := list[0].ID
+	for _, q := range []string{"q1", "q2"} {
+		if _, err := s.dispatch(ctx, "send_message", map[string]any{"to": "claude", "conversation_id": id, "message": q}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read, err := s.dispatch(ctx, "read_conversation", map[string]any{"id": id, "tail": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read, "messages 4–4 of 4") || strings.Contains(read, "q1") || !strings.Contains(read, "turns: 2/5") {
+		t.Fatalf("tail read:\n%s", read)
+	}
+	closed, err := s.dispatch(ctx, "close_conversation", map[string]any{"id": id, "note": "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(closed, "closed "+id) || !strings.Contains(closed, "note: done") || strings.Contains(closed, "answer") {
+		t.Fatalf("close output: %q", closed)
+	}
+}
+
 func TestUnknownMethod(t *testing.T) {
 	e := newEngine(t)
 	var out, logs bytes.Buffer

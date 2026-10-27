@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -74,6 +75,80 @@ func TestConversationRoundtrip(t *testing.T) {
 	list, err := s.ListConversations(context.Background(), "/repo", 10)
 	if err != nil || len(list) != 1 || list[0].ID != c.ID {
 		t.Fatalf("%+v %v", list, err)
+	}
+}
+
+func TestOpenMigratesAnOlderStore(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The schema as the first release wrote it.
+	if _, err := db.Exec(`
+CREATE TABLE conversations (id TEXT PRIMARY KEY, topic TEXT NOT NULL, context TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL, dir TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, author TEXT NOT NULL, kind TEXT NOT NULL,
+  body TEXT NOT NULL, cost_usd REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+INSERT INTO conversations VALUES ('cnv_old','t','','open','/r','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+INSERT INTO messages VALUES ('msg_old','cnv_old','self','message','hi',0,'2026-01-01T00:00:00Z');`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	ctx := context.Background()
+	if ok, err := s.SpendTurn(ctx, "cnv_old"); err != nil || !ok {
+		t.Fatalf("spend: %v %v", ok, err)
+	}
+	c, err := s.Conversation(ctx, "cnv_old")
+	if err != nil || c.Turns != 1 || c.MaxTurns != 0 {
+		t.Fatalf("%+v %v", c, err)
+	}
+	msgs, err := s.Messages(ctx, "cnv_old")
+	if err != nil || len(msgs) != 1 || msgs[0].Body != "hi" {
+		t.Fatalf("%+v %v", msgs, err)
+	}
+}
+
+func TestSpendTurnStopsAtTheLimit(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	c := Conversation{ID: NewID("cnv"), Topic: "t", Status: "open", MaxTurns: 1, CreatedAt: now, UpdatedAt: now}
+	if err := s.CreateConversation(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []bool{true, false, false} {
+		if ok, err := s.SpendTurn(ctx, c.ID); err != nil || ok != want {
+			t.Fatalf("spend %d: %v %v", i, ok, err)
+		}
+	}
+	if back, _ := s.Conversation(ctx, c.ID); back.Turns != 1 {
+		t.Fatalf("a refused turn was counted: %d", back.Turns)
+	}
+}
+
+func TestRequestCancelDropsTurnsOfDeadProcesses(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	live, err := s.StartTurn(ctx, "cnv_1", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.RequestCancel(ctx, "cnv_1", time.Now().Add(-time.Hour)); err != nil || len(got) != 1 || got[0].ID != live {
+		t.Fatalf("live turn: %+v %v", got, err)
+	}
+	if stop, err := s.TurnCancelled(ctx, live); err != nil || !stop {
+		t.Fatalf("flag not seen: %v %v", stop, err)
+	}
+	// Nobody polls a turn whose process died, so its heartbeat is old.
+	if got, err := s.RequestCancel(ctx, "cnv_1", time.Now().Add(time.Hour)); err != nil || len(got) != 0 {
+		t.Fatalf("a dead turn was reported as running: %+v %v", got, err)
 	}
 }
 

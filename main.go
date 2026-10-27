@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lucasvidela94/parley/internal/config"
@@ -26,7 +28,9 @@ import (
 var version = "dev"
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	// flag.ErrHelp travels up from a `-h` so it exits clean without the
+	// "parley: flag: help requested" noise.
+	if err := run(os.Args[1:]); err != nil && !errors.Is(err, flag.ErrHelp) {
 		fmt.Fprintln(os.Stderr, "parley: "+err.Error())
 		os.Exit(1)
 	}
@@ -56,6 +60,8 @@ func run(args []string) error {
 		return cmdRead(args[1:])
 	case "close":
 		return cmdClose(args[1:])
+	case "cancel":
+		return cmdCancel(args[1:])
 	case "list":
 		return cmdList(args[1:])
 	case "session":
@@ -77,9 +83,10 @@ func usage() {
 	fmt.Print(`parley — a channel between agent harnesses
 
   parley send --to <name> [--in <id>] [--context <text>] [--write] [message]
-  parley open --topic <topic> [--context <text>]
-  parley read <id>
+  parley open --topic <topic> [--context <text>] [--max-turns N]
+  parley read <id> [--tail N | --offset N] [--limit N] [--json]
   parley close <id> [--note <text>]
+  parley cancel <id>         # stop the turns running in a conversation
   parley list [--limit 20]
   parley participants
   parley session reset <name>
@@ -89,7 +96,8 @@ func usage() {
   parley harnesses           # known CLIs and which ones are verified
   parley probe -- <cmd...>   # inspect a CLI to build its spec
 
-send without --in creates an ephemeral one-turn conversation.
+send without --in creates an ephemeral one-turn conversation. Without --write
+the recipient runs in its harness's read-only mode (see parley participants).
 Local identity: PARLEY_IDENTITY. Config: parley setup.
 `)
 }
@@ -112,7 +120,10 @@ func cmdMCP() error {
 		return err
 	}
 	defer func() { _ = e.Shutdown() }()
-	return mcp.New(e, version).Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr)
+	// A signal ends the server and, through the context, any harness it runs.
+	ctx, stop := signalContext()
+	defer stop()
+	return mcp.New(e, version).Serve(ctx, os.Stdin, os.Stdout, os.Stderr)
 }
 
 func cmdParticipants() error {
@@ -129,14 +140,16 @@ func cmdParticipants() error {
 }
 
 func cmdSend(args []string) error {
-	fs := flag.NewFlagSet("send", flag.ExitOnError)
+	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	to := fs.String("to", "", "target participant")
 	in := fs.String("in", "", "conversation id to continue")
 	contextStr := fs.String("context", "", "extra context")
-	write := fs.Bool("write", false, "allow file edits")
+	write := fs.Bool("write", false, "allow file edits; without it the harness runs in its read-only mode")
 	timeout := fs.Int("timeout", 0, "timeout in seconds")
 	asJSON := fs.Bool("json", false, "JSON output")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	msg := strings.Join(fs.Args(), " ")
 	if msg == "" {
@@ -151,7 +164,10 @@ func cmdSend(args []string) error {
 		return err
 	}
 	defer func() { _ = e.Shutdown() }()
-	res, err := e.Send(context.Background(), core.SendRequest{
+	// Ctrl-C or a kill stops the harness too, instead of leaving it running.
+	ctx, stop := signalContext()
+	defer stop()
+	res, err := e.Send(ctx, core.SendRequest{
 		ConversationID: *in, To: *to, Message: msg, Context: *contextStr, Write: *write, TimeoutS: *timeout,
 	})
 	if err != nil {
@@ -168,11 +184,14 @@ func cmdSend(args []string) error {
 }
 
 func cmdOpen(args []string) error {
-	fs := flag.NewFlagSet("open", flag.ExitOnError)
+	fs := flag.NewFlagSet("open", flag.ContinueOnError)
 	topic := fs.String("topic", "", "topic")
 	contextStr := fs.String("context", "", "shared context")
+	maxTurns := fs.Int("max-turns", 0, "refuse sends after this many turns (0 = no limit)")
 	asJSON := fs.Bool("json", false, "JSON output")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	if *topic == "" {
 		*topic = strings.Join(fs.Args(), " ")
 	}
@@ -181,7 +200,7 @@ func cmdOpen(args []string) error {
 		return err
 	}
 	defer func() { _ = e.Shutdown() }()
-	view, err := e.Open(context.Background(), *topic, *contextStr)
+	view, err := e.Open(context.Background(), *topic, *contextStr, *maxTurns)
 	if err != nil {
 		return err
 	}
@@ -193,11 +212,16 @@ func cmdOpen(args []string) error {
 }
 
 func cmdRead(args []string) error {
-	fs := flag.NewFlagSet("read", flag.ExitOnError)
+	fs := flag.NewFlagSet("read", flag.ContinueOnError)
+	offset := fs.Int("offset", 0, "skip this many messages")
+	limit := fs.Int("limit", 0, "show at most this many messages")
+	tail := fs.Int("tail", 0, "show only the last N messages")
 	asJSON := fs.Bool("json", false, "JSON output")
-	_ = fs.Parse(args)
+	if err := fs.Parse(flagsFirst(fs, args)); err != nil {
+		return err
+	}
 	if fs.NArg() < 1 {
-		return errors.New("usage: parley read <id>")
+		return errors.New("usage: parley read <id> [--tail N | --offset N] [--limit N] [--json]")
 	}
 	e, err := openEngine()
 	if err != nil {
@@ -208,6 +232,9 @@ func cmdRead(args []string) error {
 	if err != nil {
 		return err
 	}
+	if view, err = view.Page(*offset, *limit, *tail); err != nil {
+		return err
+	}
 	if *asJSON {
 		return jsonOut(view)
 	}
@@ -216,10 +243,12 @@ func cmdRead(args []string) error {
 }
 
 func cmdClose(args []string) error {
-	fs := flag.NewFlagSet("close", flag.ExitOnError)
+	fs := flag.NewFlagSet("close", flag.ContinueOnError)
 	note := fs.String("note", "", "closing note")
 	asJSON := fs.Bool("json", false, "JSON output")
-	_ = fs.Parse(args)
+	if err := fs.Parse(flagsFirst(fs, args)); err != nil {
+		return err
+	}
 	if fs.NArg() < 1 {
 		return errors.New("usage: parley close <id> [--note <text>]")
 	}
@@ -235,15 +264,37 @@ func cmdClose(args []string) error {
 	if *asJSON {
 		return jsonOut(view)
 	}
-	fmt.Println(view.Markdown())
+	fmt.Println(view.CloseSummary())
+	return nil
+}
+
+func cmdCancel(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: parley cancel <id>")
+	}
+	e, err := openEngine()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = e.Shutdown() }()
+	turns, err := e.Cancel(context.Background(), args[0])
+	if err != nil {
+		return err
+	}
+	for _, t := range turns {
+		fmt.Printf("cancel requested: %s, running since %s\n", t.Participant, t.StartedAt.Format(time.RFC3339))
+	}
+	fmt.Println("the sending process kills the harness within a second; a request the provider already received may still finish and be billed")
 	return nil
 }
 
 func cmdList(args []string) error {
-	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	limit := fs.Int("limit", 20, "how many")
 	asJSON := fs.Bool("json", false, "JSON output")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	e, err := openEngine()
 	if err != nil {
 		return err
@@ -291,7 +342,7 @@ func cmdHarnesses() error {
 		}
 		fmt.Printf("%-9s %-13s %-14s %s\n", name, s.Bin, status, s.Notes)
 	}
-	fmt.Println("\nto add one: copy a config block and adjust bin/start/continue/text_path")
+	fmt.Println("\nto add one: a participant with an inline spec; the fields are in the README (Configuration)")
 	return nil
 }
 
@@ -339,10 +390,12 @@ func integrations(exe string) []integration {
 }
 
 func cmdUpdate(args []string) error {
-	fs := flag.NewFlagSet("update", flag.ExitOnError)
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	check := fs.Bool("check", false, "only report available versions")
 	force := fs.Bool("force", false, "replace a development build too")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -378,9 +431,11 @@ func cmdUpdate(args []string) error {
 }
 
 func cmdSetup(args []string) error {
-	fs := flag.NewFlagSet("setup", flag.ExitOnError)
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	write := fs.Bool("write", false, "apply the changes")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -487,11 +542,13 @@ func joinNames(m map[string]config.Participant) string {
 }
 
 func cmdProbe(args []string) error {
-	fs := flag.NewFlagSet("probe", flag.ExitOnError)
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
 	prompt := fs.String("prompt", "reply with only: ok", "test prompt")
 	viaStdin := fs.Bool("stdin", false, "send the prompt over stdin")
 	timeout := fs.Int("timeout", 120, "timeout in seconds")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	cmdArgs := fs.Args()
 	if len(cmdArgs) == 0 {
 		return errors.New("usage: parley probe [--stdin] -- <command...>")
@@ -608,6 +665,47 @@ func sortedNames(m map[string]config.Participant) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// signalContext ends on SIGINT, SIGTERM or SIGHUP. The harness runs in its own
+// process group, so a closed terminal reaches only parley; catching SIGHUP is
+// what stops the harness then. A SIGKILL cannot be caught: a harness started by
+// a killed parley keeps running.
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+}
+
+// flagsFirst moves flags ahead of the positional arguments, so
+// `parley close <id> --note x` parses the note instead of silently dropping it:
+// the flag package stops at the first positional.
+func flagsFirst(fs *flag.FlagSet, args []string) []string {
+	var flags, rest []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			rest = append(rest, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			rest = append(rest, a)
+			continue
+		}
+		flags = append(flags, a)
+		name := strings.TrimLeft(a, "-")
+		if strings.Contains(name, "=") {
+			continue
+		}
+		f := fs.Lookup(name)
+		if f == nil {
+			continue // unknown: Parse reports it
+		}
+		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); (!ok || !b.IsBoolFlag()) && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+	// "--" keeps a positional that starts with "-" from being read as a flag.
+	return append(append(flags, "--"), rest...)
 }
 
 func jsonOut(v any) error {

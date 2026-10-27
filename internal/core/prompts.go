@@ -48,7 +48,8 @@ Rules:
 
 func historyText(msgs []store.Message) string {
 	var b strings.Builder
-	for _, m := range msgs {
+	for i := range msgs {
+		m := &msgs[i]
 		if m.Kind == "error" {
 			continue
 		}

@@ -19,7 +19,9 @@ Same operations from a shell when the MCP server is not registered:
 parley participants
 parley send --to claude "message"                    # ephemeral, one turn
 parley send --to claude --in cnv_123 "follow-up"     # continue
-parley open --topic "..." --context "..."
+parley open --topic "..." --context "..." --max-turns 6
+parley read cnv_123 --tail 4                         # last 4 messages; or --offset/--limit
+parley cancel cnv_123                                # stop a running turn
 parley close cnv_123 --note "..."
 ```
 
@@ -38,7 +40,8 @@ and any open question it raised.
 1. `open_conversation(topic, context)` → `cnv_...`
 2. `send_message(to, conversation_id, message)` once per turn. The recipient sees the
    earlier turns on every call.
-3. `read_conversation(cnv_...)` when you need the transcript back.
+3. `read_conversation(cnv_...)` when you need the transcript back. For a long one, page
+   with `tail` or `offset`/`limit` (whole messages) instead of truncating the output.
 4. `close_conversation(cnv_..., note)` at the end.
 
 Done when the conversation is closed and the note states the outcome or the next step.
@@ -65,8 +68,15 @@ Done when the record exists and lists the objections that stayed open.
 ## Guardrails
 
 - **A timeout or an error is not agreement.** Say the other side did not answer.
-- **Read-only by default.** Pass `write=true` only when the change is the point, and say
-  so when reporting.
+- **Read-only by default.** Without `write=true` the recipient runs in its harness's
+  read-only mode. Pass `write=true` only when the change is the point, and say so when
+  reporting. If `participants` shows `not enforced`, that participant can still edit.
+- **A third voice is a participant.** Two participants on the same harness with different
+  `model`s are two voices in one conversation; never run one out of band and paste its reply.
+- **Budget.** When the user is short on credits, open with `max_turns`. Killing the client
+  does not stop a turn the provider already received.
+- **One turn per participant at a time.** parley does not queue; two concurrent sends to
+  the same participant run side by side in the same directory.
 - **Send pointers, not a dump.** Paths, prior decisions and constraints beat pasted
   history.
 - **Evidence or open question.** A claim you cannot verify is not a finding.

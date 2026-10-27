@@ -2,58 +2,76 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/lucasvidela94/parley/internal/config"
 	"github.com/lucasvidela94/parley/internal/harness"
 	"github.com/lucasvidela94/parley/internal/store"
 )
 
+// fake replies from a script. "ERR:<msg>" fails the turn; "BLOCK" signals
+// running and waits for the context to end, like a harness mid-turn.
 type fake struct {
 	name    string
 	mu      sync.Mutex
 	script  []string
 	prompts []string
+	opts    []harness.Options
 	calls   int
 	started int
 	cont    int
+	running chan struct{}
 }
 
 func (f *fake) Name() string       { return f.name }
 func (f *fake) Spec() harness.Spec { return harness.Spec{Bin: f.name} }
 
-func (f *fake) reply(prompt string, cont bool) (harness.Reply, error) {
+func (f *fake) reply(ctx context.Context, prompt string, o harness.Options, cont bool) (harness.Reply, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if cont {
 		f.cont++
 	} else {
 		f.started++
 	}
 	f.prompts = append(f.prompts, prompt)
+	f.opts = append(f.opts, o)
 	i := f.calls
 	f.calls++
-	if i >= len(f.script) {
-		return harness.Reply{Text: "ok"}, nil
+	out := "ok"
+	if i < len(f.script) {
+		out = f.script[i]
 	}
-	out := f.script[i]
-	if strings.HasPrefix(out, "ERR:") {
+	f.mu.Unlock()
+	switch {
+	case out == "BLOCK":
+		close(f.running)
+		<-ctx.Done()
+		return harness.Reply{}, context.Cause(ctx)
+	case strings.HasPrefix(out, "ERR:"):
 		return harness.Reply{}, errors.New(strings.TrimPrefix(out, "ERR:"))
 	}
 	return harness.Reply{Text: out}, nil
 }
 
 func (f *fake) Start(ctx context.Context, prompt string, o harness.Options) (harness.Reply, error) {
-	return f.reply(prompt, false)
+	return f.reply(ctx, prompt, o, false)
 }
 
 func (f *fake) Continue(ctx context.Context, prompt string, o harness.Options) (harness.Reply, error) {
-	return f.reply(prompt, true)
+	return f.reply(ctx, prompt, o, true)
+}
+
+func (f *fake) lastOpts() harness.Options {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.opts[len(f.opts)-1]
 }
 
 func (f *fake) lastPrompt() string {
@@ -91,7 +109,7 @@ func newTestEngine(t *testing.T, scripts map[string][]string) *testEnv {
 	}
 	byHarness := map[string]*fake{}
 	for name, script := range scripts {
-		byHarness[name] = &fake{name: name, script: script}
+		byHarness[name] = &fake{name: name, script: script, running: make(chan struct{})}
 	}
 	e := NewWith(cfg, st, func(p config.Participant) harness.Harness {
 		return byHarness[p.Harness]
@@ -123,7 +141,7 @@ func TestSendEphemeral(t *testing.T) {
 
 func TestConversationFlow(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"first", "second"}})
-	view, err := env.e.Open(context.Background(), "choose a cache", "repo at /tmp/x")
+	view, err := env.e.Open(context.Background(), "choose a cache", "repo at /tmp/x", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,6 +237,26 @@ func TestUnknownParticipant(t *testing.T) {
 	}
 }
 
+func TestSendDoesNotSpendATurnWhenTheMessageCannotBeRecorded(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"ok"}})
+	db, err := sql.Open("sqlite", "file:"+env.e.cfg.StorePath()+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`CREATE TRIGGER reject_message BEFORE INSERT ON messages
+BEGIN SELECT RAISE(ABORT, 'store is read-only'); END;`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := env.e.Send(context.Background(), SendRequest{To: "claude", Message: "q"}); err == nil || !strings.Contains(err.Error(), "store is read-only") {
+		t.Fatalf("expected the store error to survive, got %v", err)
+	}
+	if calls := env.fakes["claude"].calls; calls != 0 {
+		t.Fatalf("the harness ran %d time(s); a message that cannot be stored must not cost a turn", calls)
+	}
+}
+
 func TestReadOnlyDefault(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"ok"}})
 	if _, err := env.e.Send(context.Background(), SendRequest{To: "claude", Message: "q"}); err != nil {
@@ -226,5 +264,196 @@ func TestReadOnlyDefault(t *testing.T) {
 	}
 	if !strings.Contains(env.fakes["claude"].lastPrompt(), "read-only") {
 		t.Fatal("the prompt should declare read-only")
+	}
+	if !env.fakes["claude"].lastOpts().ReadOnly {
+		t.Fatal("the harness must be told to run read-only, not only the prompt")
+	}
+}
+
+func TestTwoModelsOfOneHarnessShareAConversation(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"opencode": {"from deepseek", "from kimi"}})
+	env.e.cfg.Participants["deepseek"] = config.Participant{Harness: "opencode", Model: "deepseek/v4"}
+	env.e.cfg.Participants["kimi"] = config.Participant{Harness: "opencode", Model: "opencode-go/kimi-k3", Args: []string{"--variant", "high"}}
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "spec", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "deepseek", Message: "position?"}); err != nil {
+		t.Fatal(err)
+	}
+	if o := env.fakes["opencode"].lastOpts(); o.Model != "deepseek/v4" {
+		t.Fatalf("deepseek ran with model %q", o.Model)
+	}
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "kimi", Message: "and you?"}); err != nil {
+		t.Fatal(err)
+	}
+	if o := env.fakes["opencode"].lastOpts(); o.Model != "opencode-go/kimi-k3" || strings.Join(o.Args, " ") != "--variant high" {
+		t.Fatalf("kimi ran with %+v", o)
+	}
+
+	view, err = env.e.Read(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := view.Markdown()
+	for _, want := range []string{"### deepseek · deepseek/v4", "### kimi · opencode-go/kimi-k3", "### opencode", "from kimi"} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("transcript lacks %q:\n%s", want, md)
+		}
+	}
+	if !strings.Contains(md, "Participants: opencode, deepseek (deepseek/v4), kimi (opencode-go/kimi-k3)") {
+		t.Fatalf("header does not list who took part:\n%s", md)
+	}
+}
+
+func TestMaxTurnsRefusesTheNextTurn(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"one", "two", "three"}})
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "budget", "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	for range 2 {
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q3"})
+	if !errors.Is(err, ErrTurnLimit) {
+		t.Fatalf("expected ErrTurnLimit, got %v", err)
+	}
+	if calls := env.fakes["claude"].calls; calls != 2 {
+		t.Fatalf("the harness ran %d times", calls)
+	}
+	view, err = env.e.Read(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Total != 4 {
+		t.Fatalf("a refused turn must leave no message behind: %d messages", view.Total)
+	}
+	if !strings.Contains(view.Markdown(), "turns: 2/2") {
+		t.Fatalf("read should show the turns spent:\n%s", view.Markdown())
+	}
+}
+
+func TestCancelStopsARunningTurn(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"BLOCK"}})
+	env.e.pollEvery = time.Millisecond
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "slow", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	if _, err := env.e.Cancel(ctx, id); err == nil {
+		t.Fatal("cancel with nothing running must say so")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q"})
+		done <- err
+	}()
+	<-env.fakes["claude"].running
+	turns, err := env.e.Cancel(ctx, id)
+	if err != nil || len(turns) != 1 || turns[0].Participant != "claude" {
+		t.Fatalf("cancel: %+v %v", turns, err)
+	}
+	if err := <-done; !errors.Is(err, ErrCancelled) {
+		t.Fatalf("expected ErrCancelled, got %v", err)
+	}
+	view, err = env.e.Read(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last := view.Messages[len(view.Messages)-1]; last.Kind != "error" {
+		t.Fatalf("a cancelled turn must be recorded as an error, got %+v", last)
+	}
+	if _, err := env.e.Cancel(ctx, id); err == nil {
+		t.Fatal("the finished turn is still registered as running")
+	}
+}
+
+func TestCloseSummaryConfirmsTheClose(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"a long peer reply"}})
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "t", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q"}); err != nil {
+		t.Fatal(err)
+	}
+	view, err = env.e.Close(ctx, id, "decided X")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := view.CloseSummary()
+	if !strings.HasPrefix(got, "closed "+id) || !strings.Contains(got, "note: decided X") || strings.Contains(got, "peer reply") {
+		t.Fatalf("summary: %q", got)
+	}
+	list, err := env.e.List(ctx, "", 10)
+	if err != nil || list[0].Status != "closed" {
+		t.Fatalf("list disagrees with close: %+v %v", list, err)
+	}
+	if _, err := env.e.Close(ctx, id, ""); err == nil {
+		t.Fatal("closing twice must fail")
+	}
+}
+
+func TestPage(t *testing.T) {
+	v := View{Total: 5}
+	for _, b := range []string{"m0", "m1", "m2", "m3", "m4"} {
+		v.Messages = append(v.Messages, store.Message{Body: b, Kind: "message"})
+	}
+	cases := []struct {
+		offset, limit, tail int
+		want                string
+		wantOffset          int
+	}{
+		{0, 0, 0, "m0 m1 m2 m3 m4", 0},
+		{0, 0, 2, "m3 m4", 3},
+		{1, 2, 0, "m1 m2", 1},
+		{4, 10, 0, "m4", 4},
+		{9, 0, 0, "", 5},
+		{0, 0, 9, "m0 m1 m2 m3 m4", 0},
+		{0, 1, 3, "m2", 2},
+	}
+	for _, c := range cases {
+		p, err := v.Page(c.offset, c.limit, c.tail)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, m := range p.Messages {
+			got = append(got, m.Body)
+		}
+		if strings.Join(got, " ") != c.want || p.Offset != c.wantOffset {
+			t.Fatalf("%+v: got %q at %d", c, got, p.Offset)
+		}
+	}
+	if _, err := v.Page(1, 0, 1); err == nil {
+		t.Fatal("tail with offset must be rejected")
+	}
+	past, _ := v.Page(9, 0, 0)
+	if md := past.Markdown(); !strings.Contains(md, "no messages in this range (5 in total)") {
+		t.Fatalf("past the end:\n%s", md)
+	}
+}
+
+func TestParticipantsSayWhenReadOnlyIsNotEnforced(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{})
+	env.e.cfg.Participants["custom"] = config.Participant{Spec: &harness.Spec{Bin: "mytool", Start: []string{"run"}}}
+	for _, p := range env.e.Participants() {
+		enforced := !strings.Contains(p["permission"], "not enforced")
+		if want := p["name"] != "custom"; enforced != want {
+			t.Fatalf("%s: permission %q", p["name"], p["permission"])
+		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Harness is the seam: two real adapters means the seam is real, and the CLI
@@ -19,6 +20,8 @@ type Harness interface {
 	Continue(ctx context.Context, prompt string, o Options) (Reply, error)
 }
 
+const waitDelay = 3 * time.Second
+
 // CLI runs any harness described by a Spec.
 type CLI struct{ spec Spec }
 
@@ -28,14 +31,14 @@ func (c *CLI) Name() string { return c.spec.Bin }
 func (c *CLI) Spec() Spec   { return c.spec }
 
 func (c *CLI) Start(ctx context.Context, prompt string, o Options) (Reply, error) {
-	return c.run(ctx, c.spec.Render(false, prompt, o.SessionID, o.Model, o.Dir), prompt, o)
+	return c.run(ctx, c.spec.Render(false, prompt, o), prompt, o)
 }
 
 func (c *CLI) Continue(ctx context.Context, prompt string, o Options) (Reply, error) {
 	if !c.spec.SupportsContinuity() {
 		return c.Start(ctx, prompt, o)
 	}
-	return c.run(ctx, c.spec.Render(true, prompt, o.SessionID, o.Model, o.Dir), prompt, o)
+	return c.run(ctx, c.spec.Render(true, prompt, o), prompt, o)
 }
 
 func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) (Reply, error) {
@@ -43,6 +46,9 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 		return Reply{}, errors.New("spec has no arguments")
 	}
 	cmd := exec.CommandContext(ctx, c.spec.Bin, args...)
+	killGroup(cmd)
+	// After a cancel, stop waiting for pipes a surviving child still holds.
+	cmd.WaitDelay = waitDelay
 	if o.Dir != "" {
 		cmd.Dir = o.Dir
 	}
@@ -55,8 +61,8 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	if ctx.Err() != nil {
-		return Reply{}, fmt.Errorf("timeout: %w", ctx.Err())
+	if cerr := classify(ctx); cerr != nil {
+		return Reply{}, cerr
 	}
 	if err != nil {
 		return Reply{}, fmt.Errorf("%s: %w: %s", c.spec.Bin, err, tail(stderr.String(), 1200))
@@ -69,6 +75,20 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 		rep.SessionID = o.SessionID
 	}
 	return rep, nil
+}
+
+// classify turns a context failure into the error the caller sees. A deadline
+// is a timeout; an explicit cancellation (Ctrl-C, the MCP client going away) is
+// not, and reporting it as one hid why the turn ended.
+func classify(ctx context.Context) error {
+	err := ctx.Err()
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("timeout: %w", err)
+	case err != nil:
+		return fmt.Errorf("cancelled: %w", context.Cause(ctx))
+	}
+	return nil
 }
 
 func tail(s string, n int) string {

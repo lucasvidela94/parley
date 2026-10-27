@@ -17,7 +17,10 @@ type Participant struct {
 	// Model is optional and always native to that harness (an OpenCode
 	// provider/model id, a Claude alias, whatever the CLI accepts). parley never
 	// interprets it.
-	Model      string        `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Args is extra argv appended after the spec's flags, for anything the
+	// spec does not cover (a variant, a profile, a provider flag).
+	Args       []string      `json:"args,omitempty"`
 	Dir        string        `json:"dir,omitempty"`
 	Permission string        `json:"permission,omitempty"` // read_only (default) | write
 	Spec       *harness.Spec `json:"spec,omitempty"`       // overrides the known harness spec

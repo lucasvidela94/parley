@@ -66,5 +66,59 @@ them. No npm wrapper: it is a Go binary, and npm would add Node plus a postinsta
 no gain. `go install` covers Go users.
 
 ## D13 — New harnesses need a probe
-**Open.** No new spec is added without `parley probe` showing the real output shape. The
-`codex`, `cursor` and `pi` specs are deliberately marked unverified.
+**Decided.** No new spec is added without `parley probe` showing the real output shape.
+
+Probed 2026-10-25 with the binaries installed at the time: codex 0.163.0 and cursor-agent
+2026.10.19 matched their specs end to end (text, session id, resume) and are now verified.
+Cursor needs the working directory trusted (`--trust` or an interactive run); parley does not
+pass `--trust`, because trusting a tree is the user's call. pi 1.3.0 disagreed with the spec:
+its JSON mode carries the answer in `message.content[]` (an array) and reports errors inside the
+stream with exit 0. Rather than teach the adapter to walk arrays, the pi spec dropped to text
+mode, where stderr and the exit code carry the failure. Supporting Pi's JSON mode is adapter
+work, not a spec edit.
+
+## D14 — Trust model: configuration is code
+**Decided.** parley runs the argv in each participant's spec (`bin`, `start`, `continue`) and
+points it at that participant's `dir`. Whoever can write `~/.config/parley/config.json` can run
+arbitrary commands as the user on the next `send`. That is the same trust boundary as a
+Makefile, which is why the file is written `0600` and `setup` only adds participants that are
+missing. It is also why read-only is a convenience, not a sandbox.
+
+The channel assumes three things, and they are limitations, not bugs:
+
+- **Prompt content is untrusted input for the recipient.** History, context and the peer's
+  message are concatenated raw into the prompt. `read_only` limits what the recipient can
+  change, not what it can be told to think.
+- **`PARLEY_CHAIN` and `PARLEY_DEPTH` are cooperative.** They stop accidental recursion. A
+  child that rewrites its own environment can bypass them.
+- **`parley update` verifies sha256, not a signature.** `checksums.txt` ships with the release,
+  so compromising the release is enough. If that is not acceptable, install through a package
+  manager or pin a version.
+
+## D15 — Concurrent turns to one participant are not serialized
+**Open.** Sessions are keyed by `(participant, directory)` and written without a lock. Two
+processes sending to the same participant at the same time can each start a session, and the
+last writer wins: one of them loses continuity on the following turn. The message still
+arrives and the transcript stays complete. Serializing needs a lock plus a retry policy, a
+layer D7 deliberately leaves out; callers that need continuity should not address the same
+participant from two processes at once.
+
+## D16 — Read-only is the harness's flag, not a line in the prompt
+**Decided, after a bug.** Every spec carried `read_only_args` and `model_args`, but argv was
+built from `start`/`continue` alone: no turn ever got its read-only flag or its model. A
+debate without `--write` rewrote files in the repo (issue #7), and `model` was silently
+ignored (issue #6). `Render` now appends, in order, the permission flags, the model flags,
+the participant's `args`, and the prompt. A spec without `read_only_args` is shown as
+`read_only (not enforced …)` by `participants` rather than renamed: the flag keeps its name
+because, with the fix, it does what it says for every built-in harness.
+
+## D17 — A turn budget, not a token budget
+**Decided.** `max_turns` caps a conversation; the check and the increment are one SQL
+statement, so concurrent sends cannot both pass. A failed turn counts. Word limits and money
+budgets were left out: truncating a reply corrupts the record, and only Claude reports a cost,
+so a money cap would be enforced for one harness and decorative for the rest.
+
+`parley cancel` flags the running turns in the store; the owning process polls every second
+and cancels its context, which kills the harness's process group. Polling the store instead of
+signalling a pid works across processes without trusting a pid that may have been reused. It
+cannot recall a request the provider already accepted, and the docs say so.

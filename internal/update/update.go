@@ -24,9 +24,10 @@ import (
 
 const (
 	defaultAPI = "https://api.github.com"
-	// maxBinarySize bounds what an archive may unpack, so a malicious release
-	// cannot fill the disk.
+	// maxBinarySize bounds what an archive may unpack; maxAssetSize bounds the
+	// download itself, so a hostile release cannot fill the disk either way.
 	maxBinarySize = 256 << 20
+	maxAssetSize  = 256 << 20
 )
 
 type Release struct {
@@ -257,9 +258,16 @@ func (c *Client) download(ctx context.Context, url string, dst io.Writer) (strin
 	if err := statusError(resp); err != nil {
 		return "", err
 	}
+	if resp.ContentLength > maxAssetSize {
+		return "", fmt.Errorf("asset is larger than %d bytes (content-length %d)", maxAssetSize, resp.ContentLength)
+	}
 	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(dst, h), resp.Body); err != nil {
+	n, err := io.Copy(io.MultiWriter(dst, h), io.LimitReader(resp.Body, maxAssetSize+1))
+	if err != nil {
 		return "", err
+	}
+	if n > maxAssetSize {
+		return "", fmt.Errorf("asset exceeds %d bytes", maxAssetSize)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

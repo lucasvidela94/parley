@@ -9,10 +9,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -196,6 +198,19 @@ func TestLatestSendsToken(t *testing.T) {
 	_, _ = c.Latest(context.Background())
 	if gotAuth != "Bearer secret" {
 		t.Fatalf("authorization header: %q", gotAuth)
+	}
+}
+
+func TestDownloadRejectsOversizedAsset(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.FormatInt(maxAssetSize+1, 10))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := &Client{HTTP: srv.Client()}
+	if _, err := c.download(context.Background(), srv.URL, io.Discard); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("expected an oversized-asset error, got %v", err)
 	}
 }
 

@@ -2,29 +2,71 @@ package harness
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
 func TestRender(t *testing.T) {
-	claude, _ := Known("claude")
-	got := claude.Render(false, "hola", "uuid-1", "opus", "/tmp")
-	want := []string{"-p", "--session-id", "uuid-1", "--output-format", "json"}
-	if len(got) != len(want) {
-		t.Fatalf("len: got %v", got)
+	cases := []struct {
+		name    string
+		harness string
+		cont    bool
+		o       Options
+		want    []string
+	}{
+		{
+			name: "claude read-only with a model", harness: "claude",
+			o: Options{SessionID: "uuid-1", Model: "opus", ReadOnly: true},
+			want: []string{"-p", "--session-id", "uuid-1", "--output-format", "json",
+				"--permission-mode", "plan", "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit",
+				"--model", "opus"},
+		},
+		{
+			name: "claude with write and no model", harness: "claude",
+			o:    Options{SessionID: "uuid-1"},
+			want: []string{"-p", "--session-id", "uuid-1", "--output-format", "json"},
+		},
+		{
+			name: "opencode continue: flags before the prompt", harness: "opencode", cont: true,
+			o: Options{SessionID: "ses_1", Model: "opencode-go/kimi-k3", ReadOnly: true, Args: []string{"--variant", "high"}},
+			want: []string{"run", "--session", "ses_1", "--format", "json",
+				"--agent", "plan", "--model", "opencode-go/kimi-k3", "--variant", "high", "hola"},
+		},
+		{
+			name: "codex resume read-only uses the config override", harness: "codex", cont: true,
+			o: Options{SessionID: "th_1", ReadOnly: true},
+			want: []string{"exec", "resume", "th_1", "--json", "--skip-git-repo-check",
+				"-c", `sandbox_mode="read-only"`},
+		},
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("arg %d: got %q want %q", i, got[i], want[i])
+	for _, c := range cases {
+		s, _ := Known(c.harness)
+		got := s.Render(c.cont, "hola", c.o)
+		if strings.Join(got, "\x00") != strings.Join(c.want, "\x00") {
+			t.Fatalf("%s:\ngot  %q\nwant %q", c.name, got, c.want)
 		}
 	}
+}
 
-	open, _ := Known("opencode")
-	got = open.Render(true, "hola", "ses_1", "", "/tmp")
-	if got[0] != "run" || got[1] != "--session" || got[2] != "ses_1" {
-		t.Fatalf("continue render: %v", got)
+func TestEveryBuiltinEnforcesReadOnly(t *testing.T) {
+	for _, n := range Names() {
+		s, _ := Known(n)
+		if !s.EnforcesReadOnly() {
+			t.Fatalf("%s has no read-only flags", n)
+		}
 	}
-	if got[len(got)-1] != "hola" {
-		t.Fatalf("prompt not appended: %v", got)
+}
+
+func TestPiSpecReadsTextOutput(t *testing.T) {
+	s, _ := Known("pi")
+	// pi's json mode hides the answer in message.content[] (an array) and
+	// reports errors inside the stream with exit 0; text mode is what works.
+	rep, err := s.Parse("ok\n")
+	if err != nil || rep.Text != "ok" {
+		t.Fatalf("text output: %+v %v", rep, err)
+	}
+	if !s.SupportsContinuity() {
+		t.Fatal("pi should continue by session id")
 	}
 }
 

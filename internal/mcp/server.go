@@ -130,7 +130,7 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 		return "Local identity: " + s.e.Identity() + "\nParticipants:\n" + strings.Join(lines, "\n"), nil
 
 	case "open_conversation":
-		view, err := s.e.Open(ctx, str(a, "topic"), str(a, "context"))
+		view, err := s.e.Open(ctx, str(a, "topic"), str(a, "context"), integer(a, "max_turns"))
 		if err != nil {
 			return "", err
 		}
@@ -161,6 +161,10 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 		if err != nil {
 			return "", err
 		}
+		view, err = view.Page(integer(a, "offset"), integer(a, "limit"), integer(a, "tail"))
+		if err != nil {
+			return "", err
+		}
 		return view.Markdown(), nil
 
 	case "close_conversation":
@@ -168,7 +172,7 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 		if err != nil {
 			return "", err
 		}
-		return view.Markdown(), nil
+		return view.CloseSummary(), nil
 
 	case "list_conversations":
 		list, err := s.e.List(ctx, str(a, "dir"), integer(a, "limit"))
@@ -202,8 +206,9 @@ func tools() []any {
 				"type":     "object",
 				"required": []string{"topic"},
 				"properties": map[string]any{
-					"topic":   map[string]any{"type": "string"},
-					"context": map[string]any{"type": "string", "description": "Shared context: files, prior decisions, constraints"},
+					"topic":     map[string]any{"type": "string"},
+					"context":   map[string]any{"type": "string", "description": "Shared context: files, prior decisions, constraints"},
+					"max_turns": map[string]any{"type": "integer", "description": "Refuse sends after this many turns (default: no limit)"},
 				},
 			},
 		},
@@ -219,18 +224,24 @@ func tools() []any {
 					"message":         map[string]any{"type": "string"},
 					"conversation_id": map[string]any{"type": "string", "description": "Optional: continue that conversation"},
 					"context":         map[string]any{"type": "string", "description": "Extra context for this turn"},
-					"write":           map[string]any{"type": "boolean", "description": "Allow the recipient to edit files (default false)"},
-					"timeout_s":       map[string]any{"type": "integer"},
+					"write": map[string]any{"type": "boolean", "description": "Allow the recipient to edit files (default false). Without it the harness runs " +
+						"in its read-only mode (see participants); a harness with no such mode is marked 'not enforced'."},
+					"timeout_s": map[string]any{"type": "integer"},
 				},
 			},
 		},
 		map[string]any{
 			"name":        "read_conversation",
-			"description": "Return a full conversation.",
+			"description": "Return a conversation. Long transcripts can be read in pieces of whole messages with offset/limit or tail.",
 			"inputSchema": map[string]any{
-				"type":       "object",
-				"required":   []string{"id"},
-				"properties": map[string]any{"id": map[string]any{"type": "string"}},
+				"type":     "object",
+				"required": []string{"id"},
+				"properties": map[string]any{
+					"id":     map[string]any{"type": "string"},
+					"offset": map[string]any{"type": "integer", "description": "Skip this many messages"},
+					"limit":  map[string]any{"type": "integer", "description": "Return at most this many messages"},
+					"tail":   map[string]any{"type": "integer", "description": "Return only the last N messages"},
+				},
 			},
 		},
 		map[string]any{
