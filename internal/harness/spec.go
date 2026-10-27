@@ -58,6 +58,9 @@ type Spec struct {
 	ErrorEventType string `json:"error_event_type,omitempty"`
 	ErrorBoolPath  string `json:"error_bool_path,omitempty"`
 	CostPath       string `json:"cost_path,omitempty"`
+	// ErrorHints maps a fragment of the CLI's stderr to advice appended to the
+	// error when the command fails with it.
+	ErrorHints map[string]string `json:"error_hints,omitempty"`
 	// ModelKeysPath is a dotted path to an object whose keys are the model ids
 	// the turn used (claude's modelUsage). json output only.
 	ModelKeysPath string `json:"model_keys_path,omitempty"`
@@ -161,11 +164,14 @@ var profiles = map[string]Spec{
 		Output:        "json",
 		TextPath:      "result",
 		ErrorBoolPath: "is_error",
-		ModelArgs:     []string{"--model", "{model}"},
-		ModelsArgs:    []string{"--list-models"},
-		ReadOnlyArgs:  []string{"--mode", "plan"},
-		Verified:      true,
-		Notes:         "verified against 2026.10.19-6bbf2c4: result carries the text, session_id the session, --resume keeps it, --mode plan is accepted; the working directory must be trusted or the CLI refuses to start with \"Workspace Trust Required\": run `cursor-agent` there once and accept, or give the participant \"args\": [\"--trust\"] (parley never adds --trust itself)",
+		ErrorHints: map[string]string{
+			"Workspace Trust Required": `run cursor-agent once in that directory and accept the prompt, or add "args": ["--trust"] to the participant`,
+		},
+		ModelArgs:    []string{"--model", "{model}"},
+		ModelsArgs:   []string{"--list-models"},
+		ReadOnlyArgs: []string{"--mode", "plan"},
+		Verified:     true,
+		Notes:        "verified against 2026.10.19-6bbf2c4: result carries the text, session_id the session, --resume keeps it, --mode plan is accepted; the working directory must be trusted or the CLI refuses to start with \"Workspace Trust Required\": run `cursor-agent` there once and accept, or give the participant \"args\": [\"--trust\"] (parley never adds --trust itself)",
 	},
 	"pi": {
 		Bin: "pi",

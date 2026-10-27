@@ -237,6 +237,9 @@ func merge(base, over harness.Spec) harness.Spec {
 
 // mergeFlagArgs lets a participant replace the flag lists of its harness spec.
 func mergeFlagArgs(base, over harness.Spec) harness.Spec {
+	if over.ErrorHints != nil {
+		base.ErrorHints = over.ErrorHints
+	}
 	if over.ModelArgs != nil {
 		base.ModelArgs = over.ModelArgs
 	}

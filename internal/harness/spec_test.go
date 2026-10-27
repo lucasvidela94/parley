@@ -213,6 +213,26 @@ func TestCursorAndOpencodeCanListTheirModels(t *testing.T) {
 	}
 }
 
+func TestFailureCarriesTheSpecHintForKnownStderr(t *testing.T) {
+	spec := Spec{
+		Bin: "sh", Start: []string{"-c", "echo 'Workspace Trust Required' >&2; exit 1"}, Output: "text",
+		ErrorHints: map[string]string{"Workspace Trust Required": "trust the directory"},
+	}
+	_, err := NewCLI(spec).Start(context.Background(), "", Options{})
+	if err == nil || !strings.Contains(err.Error(), "Workspace Trust Required") || !strings.Contains(err.Error(), "hint: trust the directory") {
+		t.Fatalf("the stderr and the hint must both be in the error: %v", err)
+	}
+	spec.Start = []string{"-c", "echo other >&2; exit 1"}
+	_, err = NewCLI(spec).Start(context.Background(), "", Options{})
+	if err == nil || strings.Contains(err.Error(), "hint:") {
+		t.Fatalf("an unrelated failure must not get the hint: %v", err)
+	}
+	cursor, _ := Known("cursor")
+	if !strings.Contains(cursor.ErrorHints["Workspace Trust Required"], "--trust") {
+		t.Fatalf("cursor must explain the trust failure: %v", cursor.ErrorHints)
+	}
+}
+
 func TestCLICommandFailureSurfacesStderr(t *testing.T) {
 	spec := Spec{Bin: "sh", Start: []string{"-c", "echo fallo >&2; exit 3"}, Output: "text"}
 	if _, err := NewCLI(spec).Start(context.Background(), "", Options{}); err == nil {

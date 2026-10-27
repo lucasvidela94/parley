@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 )
@@ -65,7 +66,7 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 		return Reply{}, cerr
 	}
 	if err != nil {
-		return Reply{}, fmt.Errorf("%s: %w: %s", c.spec.Bin, err, tail(stderr.String(), 1200))
+		return Reply{}, fmt.Errorf("%s: %w: %s%s", c.spec.Bin, err, tail(stderr.String(), 1200), c.spec.hint(stderr.String()))
 	}
 	rep, err := c.spec.Parse(stdout.String())
 	if err != nil {
@@ -75,6 +76,22 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 		rep.SessionID = o.SessionID
 	}
 	return rep, nil
+}
+
+// hint is the spec's advice for a failure whose stderr it recognises, ready to
+// append to the error. The first match in key order wins, so it is stable.
+func (s Spec) hint(stderr string) string {
+	keys := make([]string, 0, len(s.ErrorHints))
+	for k := range s.ErrorHints {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if strings.Contains(stderr, k) {
+			return " (hint: " + s.ErrorHints[k] + ")"
+		}
+	}
+	return ""
 }
 
 // ListModels runs the spec's own model listing and returns what it printed.
