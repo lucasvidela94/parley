@@ -63,13 +63,14 @@ type SendResult struct {
 // View is a conversation and a window of its messages: Messages starts at
 // index Offset of Total.
 type View struct {
-	Conversation store.Conversation `json:"conversation"`
-	Messages     []store.Message    `json:"messages"`
-	Offset       int                `json:"offset"`
-	Total        int                `json:"total"`
-	Failed       int                `json:"failed_turns,omitempty"` // whole conversation: turns spent that ended in an error
-	CostUSD      float64            `json:"cost_usd,omitempty"`     // whole conversation, when the harness reports it
-	Authors      []Author           `json:"participants"`           // whole conversation, in order of first turn
+	Conversation store.Conversation  `json:"conversation"`
+	Messages     []store.Message     `json:"messages"`
+	Offset       int                 `json:"offset"`
+	Total        int                 `json:"total"`
+	Failed       int                 `json:"failed_turns,omitempty"` // whole conversation: turns spent that ended in an error
+	Running      []store.RunningTurn `json:"running,omitempty"`      // turns being answered right now
+	CostUSD      float64             `json:"cost_usd,omitempty"`     // whole conversation, when the harness reports it
+	Authors      []Author            `json:"participants"`           // whole conversation, in order of first turn
 }
 
 // Author is one voice in a transcript and the models it spoke with.
@@ -300,7 +301,12 @@ func (e *Engine) Read(ctx context.Context, id string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	v := View{Conversation: conv, Messages: msgs, Total: len(msgs)}
+	// Same staleness rule as Cancel: a turn nobody heartbeats is a dead process.
+	running, err := e.st.RunningTurns(ctx, id, time.Now().Add(-5*e.pollEvery))
+	if err != nil {
+		return View{}, err
+	}
+	v := View{Conversation: conv, Messages: msgs, Total: len(msgs), Running: running}
 	seen := map[string]int{}
 	for j := range msgs {
 		m := &msgs[j]

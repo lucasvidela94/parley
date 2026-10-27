@@ -380,6 +380,46 @@ func TestCancelStopsARunningTurn(t *testing.T) {
 	}
 }
 
+func TestReadShowsATurnInProgress(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"BLOCK"}})
+	env.e.pollEvery = time.Millisecond
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "slow", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	if strings.Contains(view.Markdown(), "in progress") {
+		t.Fatalf("nothing is running yet:\n%s", view.Markdown())
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q"})
+		done <- err
+	}()
+	<-env.fakes["claude"].running
+	view, err = env.e.Read(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Running) != 1 || view.Running[0].Participant != "claude" {
+		t.Fatalf("running turns: %+v", view.Running)
+	}
+	if !strings.Contains(view.Markdown(), "turn in progress: claude, since ") {
+		t.Fatalf("read must say who is working:\n%s", view.Markdown())
+	}
+
+	if _, err := env.e.Cancel(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	view, _ = env.e.Read(ctx, id)
+	if len(view.Running) != 0 || strings.Contains(view.Markdown(), "in progress") {
+		t.Fatalf("a finished turn is not in progress:\n%s", view.Markdown())
+	}
+}
+
 func TestCloseSummaryConfirmsTheClose(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"a long peer reply"}})
 	ctx := context.Background()

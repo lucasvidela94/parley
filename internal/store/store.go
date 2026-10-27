@@ -289,6 +289,28 @@ func (s *Store) RequestCancel(ctx context.Context, conversationID string, staleB
 	return out, rows.Err()
 }
 
+// RunningTurns lists the live turns of a conversation without touching them.
+// Turns not seen since staleBefore belong to a process that died and are left
+// out.
+func (s *Store) RunningTurns(ctx context.Context, conversationID string, staleBefore time.Time) ([]RunningTurn, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,participant,started_at FROM running_turns WHERE conversation_id=? AND seen_at>=? ORDER BY started_at`, conversationID, ts(staleBefore))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []RunningTurn
+	for rows.Next() {
+		var r RunningTurn
+		var started string
+		if err := rows.Scan(&r.ID, &r.ConversationID, &r.Participant, &started); err != nil {
+			return nil, err
+		}
+		r.StartedAt, _ = time.Parse(time.RFC3339Nano, started)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) ListConversations(ctx context.Context, dir string, limit int) ([]Conversation, error) {
 	if limit <= 0 {
 		limit = 20

@@ -50,6 +50,9 @@ func (v View) Markdown() string {
 		}
 		b.WriteString("Participants: " + strings.Join(names, ", ") + "\n")
 	}
+	for _, r := range v.Running {
+		fmt.Fprintf(&b, "\n_turn in progress: %s, since %s_\n", r.Participant, r.StartedAt.Format("15:04:05Z"))
+	}
 	if c := strings.TrimSpace(v.Conversation.Context); c != "" {
 		b.WriteString("\nContext: " + c + "\n")
 	}
