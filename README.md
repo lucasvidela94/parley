@@ -273,6 +273,24 @@ read once, at startup.
 | `max_depth` | how many hops a chain may take (default 3): A asks B, B asks C, C asks D is three. It counts nested sends, not turns in a conversation |
 | `store` | SQLite path (default `~/.local/share/parley/parley.db`, or `$PARLEY_DATA`) |
 
+### Any model, no gateway
+
+parley has no providers and no gateway (D11): `model` is whatever the harness accepts, passed
+through untouched. To use a model from a provider, make the harness able to reach it, then name
+the model:
+
+1. Give the harness the provider's credentials with its own tooling (for OpenCode, `opencode auth`).
+2. `parley models <participant>` prints the ids that harness accepts, exactly as it spells them.
+   OpenCode spells them `provider/model`, for example `opencode-go/kimi-k3`.
+3. Put one in `model`, or pass it for one call with `--model` / the `model` argument. Leave
+   `model` out for the harness default.
+
+A provider that does not appear in `parley models` is not reachable through that harness, and
+parley will not add it. Not every harness can list models; the error says so, and its own
+documentation is the list. This path has been run here only against the providers an OpenCode
+install ships with; OpenRouter and Fireworks go the same way if the harness is configured for
+them, but they were not run.
+
 ### Read-only, enforced by the harness
 
 Without `--write` / `write=true`, or when the participant is `read_only`, parley launches the

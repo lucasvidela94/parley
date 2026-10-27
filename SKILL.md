@@ -65,6 +65,28 @@ This is the pattern for "review this with claude and let both of you decide".
 
 Done when the record exists and lists the objections that stayed open.
 
+## Several voices at once
+
+For "ask three models and tell me where they disagree": the same question to N participants
+in parallel, then you synthesize. In one measured run, three voices took 13 s in parallel
+against 28 s one after another, for the same three turns.
+
+1. Form your own position first, as above.
+2. `open_conversation(topic, context, max_turns=N)`: one turn per voice, so a retry loop
+   cannot run away.
+3. Send the same question to each participant, read-only. **The MCP server answers one call
+   at a time**, so over MCP the sends queue. For real parallelism run them from a shell:
+   `parley send --to A --in cnv_... "..." &` for each voice, then `wait`.
+4. `read_conversation` and group the answers by position. Voices disagree (in the measured
+   run it was one against two on a yes/no), and that is the result: do not average them.
+   Weigh each by the evidence it cites, and say which voice reasoned and which one guessed.
+5. `close_conversation(cnv_..., note)` with the decision and the objections that stayed open.
+
+If one voice must edit, give it its own `dir` (a worktree) and `write=true`; the rest stay
+read-only. Two voices on the same participant in the same directory race each other.
+
+Done when you can name each voice's position, where they differ, and what you decided.
+
 ## Guardrails
 
 - **A timeout or an error is not agreement.** Say the other side did not answer.
