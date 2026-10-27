@@ -327,17 +327,19 @@ parley does not sandbox anything (see D14 in `docs/decisions.md`).
 
 ### Concurrency
 
-parley does not queue. Two sends to the same participant run as two harness processes at
-once, in the same directory unless the participant has its own `dir`. Consequences:
+Turns to **different** participants run in parallel. Turns to the **same** participant that
+share a harness session are serialized, across processes: the second `send` waits for the
+first, then resumes the same session and sees the reply that arrived meanwhile (D15). Waiting
+counts against the turn's timeout, shows in `read` as a turn in progress, and `parley cancel`
+stops it like any other. The lock is a lease in the store refreshed while the turn runs, so a
+process that dies stops holding it after a few seconds. Harnesses with no session continuity
+(`omp`) are not serialized, and neither are two models of one participant, which have
+separate sessions. Consequences that remain:
 
-- Both see the files as they are; with `write` they can edit the same files. Point a writing
-  participant at its own worktree with `dir`.
+- Two participants that point at the same directory run side by side there; with `write` they
+  can edit the same files. Point a writing participant at its own worktree with `dir`.
 - A harness you are already using in that directory (an open coding session) is not visible
   to parley; it runs alongside it.
-- Session continuity is last-writer-wins: one of the two sends may start a fresh session on
-  the following turn (D15). The transcript keeps both turns.
-
-If two turns must not overlap, wait for the first `send` to return.
 
 ## How session continuity works
 
@@ -367,10 +369,9 @@ OpenCode: `--session`). If the session vanished, parley starts a fresh one inste
   separate layer.
 - The Pi spec is not verified end-to-end: its JSON mode puts the answer in `message.content[]`,
   an array the adapter cannot read, so its spec uses text mode.
-- Concurrent sends to the same participant are not serialized: one of them can lose session
-  continuity. The transcript is unaffected. See Concurrency.
-- Cancelling cannot recall a request a provider already received, and parley has no token
-  counts. See Cost and cancelling.
+- Two participants that point at the same directory run side by side there. See Concurrency.
+- Cancelling cannot recall a request a provider already received, and token counts exist only
+  for the harnesses that report them. See Cost and cancelling.
 - The MCP server handles one call at a time, so an agent cannot cancel its own running
   `send_message`; use `parley cancel` from a shell.
 

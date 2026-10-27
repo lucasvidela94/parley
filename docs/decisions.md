@@ -102,13 +102,21 @@ The channel assumes three things, and they are limitations, not bugs:
   so compromising the release is enough. If that is not acceptable, install through a package
   manager or pin a version.
 
-## D15 — Concurrent turns to one participant are not serialized
-**Open.** Sessions are keyed by `(participant, directory)` and written without a lock. Two
-processes sending to the same participant at the same time can each start a session, and the
-last writer wins: one of them loses continuity on the following turn. The message still
-arrives and the transcript stays complete. Serializing needs a lock plus a retry policy, a
-layer D7 deliberately leaves out; callers that need continuity should not address the same
-participant from two processes at once.
+## D15 — Concurrent turns to one participant are serialized
+**Decided (issue #24).** Sessions are keyed by `(participant, directory)`. Two processes
+sending to the same participant at once could each start a session, and the last writer won:
+one of them lost continuity on the following turn. Now a turn takes a lease on that key
+before it touches the session: one SQL statement grants it if it is free or its holder has
+missed five heartbeats, the holder refreshes it while the turn runs, and a turn that finds it
+held polls until it is free, its timeout runs out or it is cancelled. D7 holds: the lease
+lives in the same SQLite file, there is no daemon and no queue process.
+
+Waiting for the lease is inside the turn's timeout, so a send never takes longer than the
+timeout the caller asked for. A turn that waited re-reads the conversation when it starts,
+because the reply it was waiting for is part of what it must see. Measured with cursor-agent:
+two concurrent sends took 13.9 s before and 20.8 s after, against 9.5 s for one: the second
+now waits for the first instead of racing it. Harnesses with no session continuity are not
+locked, since they have no session to lose.
 
 ## D16 — Read-only is the harness's flag, not a line in the prompt
 **Decided, after a bug.** Every spec carried `read_only_args` and `model_args`, but argv was

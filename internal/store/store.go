@@ -102,6 +102,11 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, created_at);
+CREATE TABLE IF NOT EXISTS turn_locks (
+  lock_key TEXT PRIMARY KEY,
+  holder   TEXT NOT NULL,
+  seen_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS running_turns (
   id              TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL,
@@ -244,6 +249,33 @@ WHERE id=? AND (max_turns=0 OR turns<max_turns)`, now(), id)
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err
+}
+
+// AcquireLock takes the lock for key if nobody holds it, or if its holder has
+// not refreshed it since staleBefore (the process died). The check and the
+// write are one statement, so two processes cannot both get it.
+func (s *Store) AcquireLock(ctx context.Context, key, holder string, staleBefore time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO turn_locks(lock_key,holder,seen_at) VALUES(?1,?2,?3)
+ON CONFLICT(lock_key) DO UPDATE SET holder=excluded.holder, seen_at=excluded.seen_at
+WHERE turn_locks.seen_at < ?4`, key, holder, now(), ts(staleBefore))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// RefreshLock is the holder's heartbeat. It does nothing for anyone else, so a
+// holder that lost the lock to a takeover cannot keep the new one alive.
+func (s *Store) RefreshLock(ctx context.Context, key, holder string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE turn_locks SET seen_at=? WHERE lock_key=? AND holder=?`, now(), key, holder)
+	return err
+}
+
+// ReleaseLock frees the lock only if holder still owns it.
+func (s *Store) ReleaseLock(ctx context.Context, key, holder string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM turn_locks WHERE lock_key=? AND holder=?`, key, holder)
+	return err
 }
 
 func (s *Store) StartTurn(ctx context.Context, conversationID, participant string) (string, error) {

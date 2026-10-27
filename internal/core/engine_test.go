@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,13 @@ type fake struct {
 	reports string // the model the harness says it used, like claude does
 
 	tokensIn, tokensOut int // usage the harness reports, 0 = nothing
+
+	// "GATE" in a script holds the call until gate is closed, and announces it
+	// on entered; active/maxActive count harness calls running at once.
+	gate      chan struct{}
+	entered   chan struct{}
+	active    int
+	maxActive int
 }
 
 func (f *fake) Name() string       { return f.name }
@@ -51,8 +59,19 @@ func (f *fake) reply(ctx context.Context, prompt string, o harness.Options, cont
 	if i < len(f.script) {
 		out = f.script[i]
 	}
+	f.active++
+	f.maxActive = max(f.maxActive, f.active)
 	f.mu.Unlock()
+	defer func() {
+		f.mu.Lock()
+		f.active--
+		f.mu.Unlock()
+	}()
 	switch {
+	case out == "GATE":
+		f.entered <- struct{}{}
+		<-f.gate
+		out = "gated"
 	case out == "BLOCK":
 		close(f.running)
 		<-ctx.Done()
@@ -768,6 +787,183 @@ func TestUsageIsKeptPerMessageAndNeverSummedAcrossHarnesses(t *testing.T) {
 	}
 	if strings.Contains(strings.SplitN(md, "\n\n", 3)[1], "tokens") {
 		t.Fatalf("token counts are not comparable across harnesses, so the header must not total them:\n%s", md)
+	}
+}
+
+// waitRunning spins until the conversation has n turns registered. It never
+// sleeps: a turn registers before it asks for the participant's lock.
+func waitRunning(t *testing.T, e *Engine, id string, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if v, err := e.Read(context.Background(), id); err == nil && len(v.Running) >= n {
+			return
+		}
+		runtime.Gosched()
+	}
+	t.Fatalf("conversation %s never had %d turns running", id, n)
+}
+
+func gated(t *testing.T, script ...string) *testEnv {
+	t.Helper()
+	env := newTestEngine(t, map[string][]string{"claude": script})
+	env.e.pollEvery = 20 * time.Millisecond
+	f := env.fakes["claude"]
+	f.gate = make(chan struct{})
+	f.entered = make(chan struct{}, 4)
+	return env
+}
+
+func TestTurnsToOneParticipantRunOneAtATimeOnOneSession(t *testing.T) {
+	env := gated(t, "GATE", "second reply")
+	f := env.fakes["claude"]
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "race", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	send := func(msg string) chan error {
+		done := make(chan error, 1)
+		go func() {
+			_, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: msg})
+			done <- err
+		}()
+		return done
+	}
+
+	first := send("FIRST-Q")
+	<-f.entered // the first turn is inside the harness and holds the participant
+	second := send("SECOND-Q")
+	waitRunning(t, env.e, id, 2)
+	// The second turn is registered and would be inside the harness by now if
+	// nothing held it back.
+	for range 500 {
+		runtime.Gosched()
+	}
+	close(f.gate)
+	for _, done := range []chan error{first, second} {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if f.maxActive != 1 {
+		t.Fatalf("%d harness calls ran at once for one participant", f.maxActive)
+	}
+	// Both turns on one session: the second resumed what the first started,
+	// instead of starting a session that the last writer would orphan.
+	if f.started != 1 || f.cont != 1 {
+		t.Fatalf("started=%d continued=%d: the turns did not share a session", f.started, f.cont)
+	}
+	// It waited, so it must see the reply that arrived while it waited, and its
+	// own question once, as the message and not as history.
+	p := f.prompts[1]
+	if !strings.Contains(p, "gated") {
+		t.Fatalf("the second turn did not see the first one's reply:\n%s", p)
+	}
+	if n := strings.Count(p, "SECOND-Q"); n != 1 {
+		t.Fatalf("its own question appears %d times:\n%s", n, p)
+	}
+}
+
+func TestCancelPreemptsATurnWaitingForTheParticipant(t *testing.T) {
+	env := gated(t, "GATE", "never asked")
+	f := env.fakes["claude"]
+	ctx := context.Background()
+	a, _ := env.e.Open(ctx, "holder", "", 0)
+	b, _ := env.e.Open(ctx, "waiter", "", 0)
+
+	holder := make(chan error, 1)
+	go func() {
+		_, err := env.e.Send(ctx, SendRequest{ConversationID: a.Conversation.ID, To: "claude", Message: "q"})
+		holder <- err
+	}()
+	<-f.entered
+	waiter := make(chan error, 1)
+	go func() {
+		_, err := env.e.Send(ctx, SendRequest{ConversationID: b.Conversation.ID, To: "claude", Message: "q"})
+		waiter <- err
+	}()
+	waitRunning(t, env.e, b.Conversation.ID, 1)
+
+	if _, err := env.e.Cancel(ctx, b.Conversation.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-waiter; !errors.Is(err, ErrCancelled) {
+		t.Fatalf("a turn waiting for the participant must be cancellable, got %v", err)
+	}
+	if f.calls != 1 {
+		t.Fatalf("the cancelled turn reached the harness: %d calls", f.calls)
+	}
+	close(f.gate)
+	if err := <-holder; err != nil {
+		t.Fatalf("cancelling the waiter must not touch the holder: %v", err)
+	}
+}
+
+// Without the heartbeat a turn longer than the staleness threshold would lose
+// the participant to a waiting one while it is still running.
+func TestRunningTurnRenewsItsLease(t *testing.T) {
+	env := gated(t, "GATE")
+	f := env.fakes["claude"]
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "long", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+env.e.cfg.StorePath()+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	seen := func() string {
+		var s string
+		_ = db.QueryRow(`SELECT seen_at FROM turn_locks`).Scan(&s)
+		return s
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := env.e.Send(ctx, SendRequest{ConversationID: view.Conversation.ID, To: "claude", Message: "q"})
+		done <- err
+	}()
+	<-f.entered
+	first := seen()
+	if first == "" {
+		t.Fatal("a running turn must hold the participant's lease")
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for seen() == first {
+		if time.Now().After(deadline) {
+			t.Fatal("the lease was never renewed while the turn ran")
+		}
+		runtime.Gosched()
+	}
+	close(f.gate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if seen() != "" {
+		t.Fatal("the lease must be gone once the turn ends")
+	}
+}
+
+func TestTheParticipantIsFreedWhenATurnFails(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"ERR:boom", "fine"}})
+	// A lock that outlived its turn would be waited out only after the staleness
+	// threshold, which is an hour here: the bounded context turns that into a failure.
+	env.e.pollEvery = time.Hour
+	for i, wantErr := range []bool{true, false} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, err := env.e.Send(ctx, SendRequest{To: "claude", Message: "q"})
+		cancel()
+		if (err != nil) != wantErr {
+			t.Fatalf("send %d: %v", i, err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "boom") {
+			t.Fatalf("send %d failed for the wrong reason (a leaked lock?): %v", i, err)
+		}
 	}
 }
 

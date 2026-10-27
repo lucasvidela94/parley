@@ -83,7 +83,8 @@ against 28 s one after another, for the same three turns.
 5. `close_conversation(cnv_..., note)` with the decision and the objections that stayed open.
 
 If one voice must edit, give it its own `dir` (a worktree) and `write=true`; the rest stay
-read-only. Two voices on the same participant in the same directory race each other.
+read-only. Two questions to the same participant queue behind each other, so use a
+different participant per voice to keep them parallel.
 
 Done when you can name each voice's position, where they differ, and what you decided.
 
@@ -103,8 +104,10 @@ Done when you can name each voice's position, where they differ, and what you de
   result carries a notice.
 - **Budget.** When the user is short on credits, open with `max_turns`. Killing the client
   does not stop a turn the provider already received.
-- **One turn per participant at a time.** parley does not queue; two concurrent sends to
-  the same participant run side by side in the same directory.
+- **One turn per participant at a time.** Two concurrent sends to the same participant are
+  serialized: the second waits for the first, inside its own timeout, and then sees its
+  reply. Different participants run in parallel; two that share a directory edit it side by
+  side.
 - **Send pointers, not a dump.** Paths, prior decisions and constraints beat pasted
   history.
 - **Evidence or open question.** A claim you cannot verify is not a finding.

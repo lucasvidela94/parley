@@ -182,6 +182,74 @@ func TestRequestCancelDropsTurnsOfDeadProcesses(t *testing.T) {
 	}
 }
 
+func TestTurnLockIsExclusiveAndExpires(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	fresh, dead := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+
+	if ok, err := s.AcquireLock(ctx, "claude\x00/x", "a", fresh); err != nil || !ok {
+		t.Fatalf("a free lock must be granted: %v %v", ok, err)
+	}
+	if ok, _ := s.AcquireLock(ctx, "claude\x00/x", "b", fresh); ok {
+		t.Fatal("a held lock must be refused while its holder is alive")
+	}
+	if ok, _ := s.AcquireLock(ctx, "claude\x00/y", "b", fresh); !ok {
+		t.Fatal("another key is independent")
+	}
+	// Nobody refreshed it: the holder's process died.
+	if ok, _ := s.AcquireLock(ctx, "claude\x00/x", "b", dead); !ok {
+		t.Fatal("a lock whose heartbeat is older than the threshold must be taken over")
+	}
+
+	// The old holder must not release or refresh what is no longer its own.
+	if err := s.ReleaseLock(ctx, "claude\x00/x", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.AcquireLock(ctx, "claude\x00/x", "c", fresh); ok {
+		t.Fatal("a stale holder's release dropped the new holder's lock")
+	}
+	if err := s.ReleaseLock(ctx, "claude\x00/x", "b"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.AcquireLock(ctx, "claude\x00/x", "c", fresh); !ok {
+		t.Fatal("a released lock is free")
+	}
+}
+
+func TestRefreshKeepsALockAlive(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	if ok, _ := s.AcquireLock(ctx, "k", "a", time.Now().Add(-time.Hour)); !ok {
+		t.Fatal("acquire")
+	}
+	age := func() {
+		t.Helper()
+		if _, err := s.db.ExecContext(ctx, `UPDATE turn_locks SET seen_at=?`, ts(time.Now().Add(-time.Hour))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live := time.Now().Add(-time.Minute) // a heartbeat older than this is a dead holder
+
+	age()
+	if err := s.RefreshLock(ctx, "k", "someone-else"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.AcquireLock(ctx, "k", "b", live); !ok {
+		t.Fatal("only the holder's refresh counts: a stranger must not keep the lock alive")
+	}
+
+	if ok, _ := s.AcquireLock(ctx, "k", "a", time.Now().Add(time.Hour)); !ok {
+		t.Fatal("reacquire")
+	}
+	age()
+	if err := s.RefreshLock(ctx, "k", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.AcquireLock(ctx, "k", "b", live); ok {
+		t.Fatal("the holder's refresh must keep the lock alive")
+	}
+}
+
 func TestUnknownConversation(t *testing.T) {
 	s := openTemp(t)
 	if _, err := s.Conversation(context.Background(), "cnv_nope"); err == nil {

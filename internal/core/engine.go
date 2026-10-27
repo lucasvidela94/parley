@@ -231,7 +231,8 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	// stored leaves no transcript, so the exchange must not happen at all. The
 	// turn already counted stays counted; failing closed is the safe side of a
 	// budget.
-	if err := e.st.AddMessage(ctx, store.Message{ConversationID: conv.ID, Author: e.identity, Kind: "message", Body: msg}); err != nil {
+	questionID := store.NewID("msg")
+	if err := e.st.AddMessage(ctx, store.Message{ID: questionID, ConversationID: conv.ID, Author: e.identity, Kind: "message", Body: msg}); err != nil {
 		return SendResult{}, fmt.Errorf("record message: %w", err)
 	}
 	model := e.callModel(req)
@@ -250,6 +251,9 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		return e.turn(ctx, turnRequest{name: req.To, model: req.Model, timeout: requestTimeout(req.TimeoutS, e.cfg.DefaultTimeoutS), write: req.Write}, func(dir string, readOnly bool) string {
 			in.dir = dir
 			in.readOnly = readOnly
+			// A turn that waited for the participant starts after other replies
+			// landed; the snapshot taken at the top of Send would hide them.
+			in.history = e.freshHistory(ctx, conv.ID, questionID, in.history)
 			return renderPrompt(in)
 		})
 	})
@@ -473,6 +477,12 @@ func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	release, err := e.lockSession(ctx, spec, sessionKey, dir)
+	if err != nil {
+		return harness.Reply{}, err
+	}
+	defer release()
+
 	sid, ok, err := e.st.Session(ctx, sessionKey, dir)
 	if err != nil {
 		return harness.Reply{}, err
@@ -500,6 +510,85 @@ func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string
 		_ = e.st.SetSession(ctx, sessionKey, dir, sid)
 	}
 	return rep, nil
+}
+
+// lockSession makes turns that share a harness session run one at a time, even
+// across processes: two turns starting a session at once would each store their
+// own and the last writer would orphan the other. A turn that finds the session
+// busy waits for it, inside its own timeout and still cancellable. The lock is a
+// lease in the store, refreshed while the turn runs, so a process that dies
+// stops holding it after a few missed polls. Harnesses with no session
+// continuity have nothing to lose and are not serialized.
+func (e *Engine) lockSession(ctx context.Context, spec harness.Spec, key, dir string) (func(), error) {
+	if !spec.SupportsContinuity() {
+		return func() {}, nil
+	}
+	lockKey, holder := key+"\x00"+dir, store.NewID("lck")
+	for {
+		got, err := e.st.AcquireLock(ctx, lockKey, holder, time.Now().Add(-5*e.pollEvery))
+		if ctx.Err() != nil {
+			// The query may have failed because the turn was cancelled or timed
+			// out; say that, not the driver's wording.
+			return nil, waitingError(ctx)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("lock session: %w", err)
+		}
+		if got {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, waitingError(ctx)
+		case <-time.After(e.pollEvery):
+		}
+	}
+
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		tick := time.NewTicker(e.pollEvery)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				_ = e.st.RefreshLock(context.WithoutCancel(ctx), lockKey, holder)
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+		_ = e.st.ReleaseLock(context.WithoutCancel(ctx), lockKey, holder)
+	}, nil
+}
+
+// waitingError explains why a turn stopped waiting for its participant. A
+// cancel keeps its cause so callers can match ErrCancelled.
+func waitingError(ctx context.Context) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("timeout while another turn to this participant was running: %w", ctx.Err())
+	}
+	return fmt.Errorf("cancelled while another turn to this participant was running: %w", context.Cause(ctx))
+}
+
+// freshHistory re-reads the conversation without the question being sent, which
+// travels as the message. If the store cannot be read it keeps the snapshot it
+// was given.
+func (e *Engine) freshHistory(ctx context.Context, convID, questionID string, snapshot []store.Message) []store.Message {
+	all, err := e.st.Messages(ctx, convID)
+	if err != nil {
+		return snapshot
+	}
+	out := make([]store.Message, 0, len(all))
+	for i := range all {
+		if all[i].ID != questionID {
+			out = append(out, all[i])
+		}
+	}
+	return out
 }
 
 func (e *Engine) participantDir(name string) string {

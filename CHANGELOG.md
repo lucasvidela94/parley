@@ -22,6 +22,14 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 
 ### Fixed
 
+- **Concurrent turns to one participant no longer race on its session** (#24, D15). Two `send`s
+  to the same participant used to run at once and the last writer orphaned the other's session.
+  The second now waits for the first, resumes the same session and sees the reply that arrived
+  meanwhile. Turns to different participants still run in parallel. The wait is a lease in the
+  store (no daemon), counts against the turn's timeout, shows in `read` as a turn in progress and
+  can be cancelled with `parley cancel`. Harnesses with no session continuity (`omp`) are not
+  serialized. Measured with cursor-agent: two concurrent sends took 13.9 s before and 20.8 s
+  after, for 9.5 s alone.
 - A text-mode harness (pi, omp) that exits 0 with an empty stdout is now an error, like the JSON
   harnesses, instead of being recorded as a reply (#35).
 
