@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -45,6 +46,39 @@ func TestRender(t *testing.T) {
 		if strings.Join(got, "\x00") != strings.Join(c.want, "\x00") {
 			t.Fatalf("%s:\ngot  %q\nwant %q", c.name, got, c.want)
 		}
+	}
+}
+
+func TestParseHermesStreamJSON(t *testing.T) {
+	s, _ := Known("hermes")
+	// Captured from hermes 0.21.4 with `parley probe`; init carries an empty
+	// session id, the result event the real one.
+	ok := `{"type": "system", "subtype": "init", "model": "", "session_id": "", "timestamp": 1}
+{"type": "text", "text": "ok", "timestamp": 2}
+{"type": "result", "session_id": "local-2a4a", "exit_code": 0, "text": "ok", "tokens": {"input": 14394}, "timestamp": 3}`
+	rep, err := s.Parse(ok)
+	if err != nil || rep.Text != "ok" || rep.SessionID != "local-2a4a" {
+		t.Fatalf("%+v %v", rep, err)
+	}
+	failed := `{"type": "result", "session_id": "local-1", "exit_code": 1, "text": "", "error": "HTTP 400: Model is unavailable."}`
+	if _, err := s.Parse(failed); err == nil || !strings.Contains(err.Error(), "Model is unavailable") {
+		t.Fatalf("the error event must surface: %v", err)
+	}
+	got := s.Render(true, "hola", Options{SessionID: "local-1", ReadOnly: true, Model: "kimi"})
+	want := []string{"chat", "-Q", "--format", "stream-json", "--resume", "local-1", "-q", "hola", "-t", "safe", "-m", "kimi"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("render:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestOmpTextModeWithoutContinuity(t *testing.T) {
+	s, _ := Known("omp")
+	if s.SupportsContinuity() {
+		t.Fatal("omp has no session id in text mode")
+	}
+	got := s.Render(false, "hola", Options{ReadOnly: true})
+	if want := []string{"-p", "--no-tools", "hola"}; !slices.Equal(got, want) {
+		t.Fatalf("render: %q", got)
 	}
 }
 

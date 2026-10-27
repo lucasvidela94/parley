@@ -1,6 +1,8 @@
 package config
 
 import (
+	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/lucasvidela94/parley/internal/harness"
@@ -43,6 +45,39 @@ func TestSpecInlineOverrides(t *testing.T) {
 	}
 	if s.Output != "jsonl" { // inherited from the known harness
 		t.Fatalf("it lost the rest of the spec: %+v", s)
+	}
+}
+
+func TestReadOnlyArgsPerParticipant(t *testing.T) {
+	raw := `{"participants": {
+  "hermes":        {"harness": "hermes"},
+  "hermes-reader": {"harness": "hermes", "spec": {"read_only_args": ["-t", "file,web"]}},
+  "hermes-open":   {"harness": "hermes", "spec": {"read_only_args": []}}
+}}`
+	var c Config
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name     string
+		want     []string
+		enforced bool
+	}{
+		{"hermes", []string{"-t", "safe"}, true},
+		{"hermes-reader", []string{"-t", "file,web"}, true},
+		{"hermes-open", []string{}, false},
+	}
+	for _, tc := range cases {
+		s, _, err := c.Spec(tc.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(s.ReadOnlyArgs, tc.want) || s.EnforcesReadOnly() != tc.enforced {
+			t.Fatalf("%s: read_only_args %q enforced=%v", tc.name, s.ReadOnlyArgs, s.EnforcesReadOnly())
+		}
+		if s.Bin != "hermes" || s.TextFilterEquals != "result" {
+			t.Fatalf("%s lost the rest of the hermes spec: %+v", tc.name, s)
+		}
 	}
 }
 

@@ -389,6 +389,14 @@ func integrations(exe string) []integration {
 			name: "pi", bin: "pi",
 			manual: fmt.Sprintf("configure the MCP server by hand: command [%q,\"mcp\"]", exe),
 		},
+		{
+			name: "hermes", bin: "hermes",
+			manual: fmt.Sprintf("hermes mcp add, by hand: command [%q,\"mcp\"], env PARLEY_IDENTITY=hermes", exe),
+		},
+		{
+			name: "omp", bin: "omp",
+			manual: fmt.Sprintf("configure the MCP server by hand: command [%q,\"mcp\"], env PARLEY_IDENTITY=omp", exe),
+		},
 	}
 }
 

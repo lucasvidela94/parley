@@ -81,7 +81,7 @@ func Known(name string) (Spec, bool) {
 
 // Names lists the built-in harness names, in a stable order.
 func Names() []string {
-	return []string{"claude", "opencode", "codex", "cursor", "pi"}
+	return []string{"claude", "opencode", "codex", "cursor", "pi", "hermes", "omp"}
 }
 
 var profiles = map[string]Spec{
@@ -168,6 +168,40 @@ var profiles = map[string]Spec{
 		ReadOnlyArgs: []string{"--no-tools"},
 		Verified:     false,
 		Notes:        "flags verified against pi 1.3.0 (--session-id creates the session, --no-tools disables tools); the turn was blocked by an expired provider key, so text output is inferred from exit 1 with the error on stderr",
+	},
+	"hermes": {
+		Bin: "hermes",
+		// The prompt sits right after -q; flags parley appends land after it.
+		Start:            []string{"chat", "-Q", "--format", "stream-json", "-q", "{prompt}"},
+		Continue:         []string{"chat", "-Q", "--format", "stream-json", "--resume", "{session}", "-q", "{prompt}"},
+		Prompt:           "arg",
+		Session:          "output:session_id",
+		Output:           "jsonl",
+		TextPath:         "text",
+		TextFilterPath:   "type",
+		TextFilterEquals: "result",
+		ErrorPath:        "error",
+		ModelArgs:        []string{"-m", "{model}"},
+		// The safe toolset (web, vision, image_gen) is the only one without
+		// file writes or a terminal. It also has no file reads: the file
+		// toolset bundles read_file with write_file and patch.
+		ReadOnlyArgs: []string{"-t", "safe"},
+		Verified:     true,
+		Notes:        "verified against hermes 0.21.4: stream-json result event carries text, session_id and error, --resume keeps the conversation; read-only (-t safe) cannot read files, so override read_only_args per participant if a reviewer must see the repo",
+	},
+	"omp": {
+		Bin: "omp",
+		// Like pi, omp's json mode puts the answer in message.content[] (an
+		// array) and only json mode reports the session id, so the spec uses
+		// text mode without continuity; parley sends the history every turn.
+		Start:        []string{"-p"},
+		Prompt:       "arg",
+		Session:      "none",
+		Output:       "text",
+		ModelArgs:    []string{"--model", "{model}"},
+		ReadOnlyArgs: []string{"--no-tools"},
+		Verified:     true,
+		Notes:        "verified against omp 18.13.0: -p prints the answer as text, a failure exits 1 with the error on stderr, --no-tools disables tools; no session continuity",
 	},
 }
 

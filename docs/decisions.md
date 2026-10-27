@@ -77,6 +77,13 @@ stream with exit 0. Rather than teach the adapter to walk arrays, the pi spec dr
 mode, where stderr and the exit code carry the failure. Supporting Pi's JSON mode is adapter
 work, not a spec edit.
 
+Probed 2026-10-27: hermes 0.21.4 (stream-json, session id in the `result` event, errors in
+`result.error`) and omp 18.13.0. omp's JSON mode has pi's shape (`message.content[]`) and is
+the only mode that reports a session id, so its spec is text mode with no continuity; parley
+already sends the history in every prompt. Hermes has no read-only flag; `-t safe` is the only
+toolset without writes, and it has no file reads, so the spec defaults to it and the README
+shows the per-participant override.
+
 ## D14 — Trust model: configuration is code
 **Decided.** parley runs the argv in each participant's spec (`bin`, `start`, `continue`) and
 points it at that participant's `dir`. Whoever can write `~/.config/parley/config.json` can run

@@ -163,6 +163,8 @@ self-update; `dev` builds refuse unless you pass `--force`.
 | Codex | `codex` | verified |
 | Cursor | `cursor-agent` | verified (the working directory must be trusted) |
 | Pi | `pi` | spec included; text mode only, turn unverified (expired key) |
+| Hermes | `hermes` | verified (0.21.4); read-only cannot read files, see below |
+| oh-my-pi | `omp` | verified (18.13.0); text mode, no session continuity |
 
 `parley harnesses` prints this list with the exact flags each spec uses.
 
@@ -257,10 +259,26 @@ harness in its own read-only mode:
 | codex | `-c sandbox_mode="read-only"` |
 | cursor | `--mode plan` |
 | pi | `--no-tools` |
+| hermes | `-t safe` (web, vision, image_gen: no file reads either) |
+| omp | `--no-tools` |
 
 The prompt says read-only too, but the flag is what holds. An inline spec without
 `read_only_args` cannot be restricted; `parley participants` marks it
-`read_only (not enforced …)` instead of pretending. These modes belong to each harness:
+`read_only (not enforced …)` instead of pretending.
+
+The read-only flags are a default, not a cage. Override them per participant when a harness's
+read-only mode is too tight — Hermes's `safe` toolset cannot read the repo, and its `file`
+toolset brings `write_file` and `patch` along with `read_file`:
+
+```json
+"hermes":        { "harness": "hermes" },
+"hermes-reader": { "harness": "hermes", "dir": "/src/x-worktree",
+                   "spec": { "read_only_args": ["-t", "file,web"] } }
+```
+
+`hermes` stays truly read-only; `hermes-reader` can read the code but could also write, so it
+points at a worktree. An empty list (`"read_only_args": []`) removes the restriction, and
+`participants` then says `not enforced`. These modes belong to each harness:
 parley does not sandbox anything (see D14 in `docs/decisions.md`).
 
 ### Concurrency
