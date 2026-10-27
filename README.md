@@ -112,6 +112,7 @@ parley read cnv_123 --json             # messages as objects: author, model, kin
 parley cancel cnv_123                  # stop the turn running in that conversation
 parley close cnv_123 --note "in-memory plus a pending benchmark"
 parley list
+parley models cursor-opus              # what that participant's harness accepts as `model`
 ```
 
 Without `--in` / `conversation_id` the conversation is ephemeral: created, answered, closed.
@@ -133,7 +134,8 @@ the order it first spoke.
 ### Cost and cancelling
 
 - `--max-turns N` (`max_turns`) caps a conversation: the send after the Nth is refused with
-  an error and nothing is recorded. A failed turn counts — it may have spent credits too.
+  an error and nothing is recorded. A failed turn counts — it may have spent credits too —
+  and `read` says so: `turns: 1/3 (1 failed)`.
 - `parley cancel <id>` asks every turn running in that conversation to stop. The process that
   owns the turn notices within a second and kills the harness with its child processes; the
   turn is recorded as an error.
@@ -161,7 +163,7 @@ self-update; `dev` builds refuse unless you pass `--force`.
 | Claude Code | `claude` | verified |
 | OpenCode | `opencode` | verified |
 | Codex | `codex` | verified |
-| Cursor | `cursor-agent` | verified (the working directory must be trusted) |
+| Cursor | `cursor-agent` | verified (the working directory must be trusted: run `cursor-agent` there once, or set the participant's `args` to `["--trust"]`) |
 | Pi | `pi` | spec included; text mode only, turn unverified (expired key) |
 | Hermes | `hermes` | verified (0.21.4); read-only cannot read files, see below |
 | oh-my-pi | `omp` | verified (18.13.0); text mode, no session continuity |
@@ -182,6 +184,7 @@ One declarative adapter, no Go required. A harness is a spec:
 | `text_path` | dotted path to the answer text (`result`, `part.text`, …) |
 | `text_filter_path` / `text_filter_equals` | for JSONL: which lines count |
 | `error_path` / `error_event_type` / `error_bool_path` | how a failure shows up |
+| `models_args` | argv that makes the CLI print its models; `parley models <name>` runs it and shows the output as is (built in for opencode, cursor and pi) |
 | `read_only_args` / `write_args` | appended when the turn is read-only / may write |
 | `model_args` | appended when the participant sets `model` (`{model}` is substituted) |
 
@@ -239,6 +242,16 @@ it returns, which is what you need to fill `text_path` and `session`.
 
 Participants are names, not harnesses: two entries on the same harness with different models
 are two voices, each with its own session, and both can take turns in one conversation.
+For Cursor, whose model ids carry the effort (`parley models cursor` lists them):
+
+```json
+"cursor-opus": { "harness": "cursor", "model": "claude-opus-5-5-high" },
+"cursor-grok": { "harness": "cursor", "model": "grok-4.7-high" }
+```
+
+A running MCP server notices an edited config file on its next call; a file that no longer
+parses is reported and the previous config stays in use. The identity and the store path are
+read once, at startup.
 
 | top-level field | meaning |
 |---|---|

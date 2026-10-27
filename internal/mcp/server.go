@@ -106,7 +106,12 @@ func (s *Server) call(ctx context.Context, raw json.RawMessage) response {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return response{Error: &rpcError{Code: -32602, Message: "invalid params"}}
 	}
-	text, err := s.dispatch(ctx, p.Name, p.Arguments)
+	// The server outlives config edits: pick them up before every call.
+	err := s.e.Reload()
+	var text string
+	if err == nil {
+		text, err = s.dispatch(ctx, p.Name, p.Arguments)
+	}
 	if err != nil {
 		return response{Result: map[string]any{
 			"content": []any{map[string]any{"type": "text", "text": err.Error()}},

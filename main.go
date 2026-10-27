@@ -68,6 +68,17 @@ func run(args []string) error {
 		return cmdList(args[1:])
 	case "session":
 		return cmdSession(args[1:])
+	case "models":
+		return cmdModels(args[1:])
+	default:
+		return runMaintenance(args)
+	}
+}
+
+// runMaintenance dispatches the commands that manage parley itself rather than
+// conversations.
+func runMaintenance(args []string) error {
+	switch args[0] {
 	case "update":
 		return cmdUpdate(args[1:])
 	case "setup":
@@ -92,6 +103,7 @@ func usage() {
   parley list [--limit 20]
   parley participants
   parley session reset <name>
+  parley models <name>       # the models that participant's harness accepts (for "model")
   parley update [--check] [--force]
   parley mcp                 # MCP server over stdio (launched by the harness)
   parley setup [--write]     # register the MCP server in every detected harness
@@ -317,6 +329,25 @@ func cmdList(args []string) error {
 	for i := range list {
 		fmt.Printf("%s  %-7s %s\n", list[i].ID, list[i].Status, list[i].Topic)
 	}
+	return nil
+}
+
+func cmdModels(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: parley models <participant>")
+	}
+	e, err := openEngine()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = e.Shutdown() }()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+	out, err := e.Models(ctx, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(out)
 	return nil
 }
 

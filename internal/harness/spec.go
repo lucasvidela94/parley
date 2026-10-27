@@ -55,7 +55,10 @@ type Spec struct {
 	ErrorBoolPath  string `json:"error_bool_path,omitempty"`
 	CostPath       string `json:"cost_path,omitempty"`
 
-	ModelArgs    []string `json:"model_args,omitempty"`
+	ModelArgs []string `json:"model_args,omitempty"`
+	// ModelsArgs is the argv that makes the CLI print the models it accepts.
+	// parley shows that output untouched; it never parses model ids.
+	ModelsArgs   []string `json:"models_args,omitempty"`
 	ReadOnlyArgs []string `json:"read_only_args,omitempty"`
 	WriteArgs    []string `json:"write_args,omitempty"`
 
@@ -117,6 +120,7 @@ var profiles = map[string]Spec{
 		TextFilterEquals: "text",
 		ErrorEventType:   "error",
 		ModelArgs:        []string{"--model", "{model}"},
+		ModelsArgs:       []string{"models"},
 		ReadOnlyArgs:     []string{"--agent", "plan"},
 		Verified:         true,
 		Notes:            "no MCP server mode; expose through the CLI or the v2 HTTP API",
@@ -150,9 +154,10 @@ var profiles = map[string]Spec{
 		TextPath:      "result",
 		ErrorBoolPath: "is_error",
 		ModelArgs:     []string{"--model", "{model}"},
+		ModelsArgs:    []string{"--list-models"},
 		ReadOnlyArgs:  []string{"--mode", "plan"},
 		Verified:      true,
-		Notes:         "verified against 2026.10.19-6bbf2c4: result carries the text, session_id the session, --resume keeps it, --mode plan is accepted; the working directory must be trusted (`--trust` or an interactive run) or the CLI refuses to start, and parley does not pass --trust for you",
+		Notes:         "verified against 2026.10.19-6bbf2c4: result carries the text, session_id the session, --resume keeps it, --mode plan is accepted; the working directory must be trusted or the CLI refuses to start with \"Workspace Trust Required\": run `cursor-agent` there once and accept, or give the participant \"args\": [\"--trust\"] (parley never adds --trust itself)",
 	},
 	"pi": {
 		Bin: "pi",
@@ -165,6 +170,7 @@ var profiles = map[string]Spec{
 		Session:      "arg",
 		Output:       "text",
 		ModelArgs:    []string{"--model", "{model}"},
+		ModelsArgs:   []string{"--list-models"},
 		ReadOnlyArgs: []string{"--no-tools"},
 		Verified:     false,
 		Notes:        "flags verified against pi 1.3.0 (--session-id creates the session, --no-tools disables tools); the turn was blocked by an expired provider key, so text output is inferred from exit 1 with the error on stderr",

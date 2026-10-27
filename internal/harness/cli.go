@@ -77,6 +77,28 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 	return rep, nil
 }
 
+// ListModels runs the spec's own model listing and returns what it printed.
+func ListModels(ctx context.Context, s Spec, dir string) (string, error) {
+	if len(s.ModelsArgs) == 0 {
+		return "", fmt.Errorf("%s cannot list its models: the spec has no models_args", s.Bin)
+	}
+	cmd := exec.CommandContext(ctx, s.Bin, s.ModelsArgs...)
+	killGroup(cmd)
+	cmd.WaitDelay = waitDelay
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if cerr := classify(ctx); cerr != nil {
+		return "", cerr
+	}
+	if err != nil {
+		return "", fmt.Errorf("%s %s: %w: %s", s.Bin, strings.Join(s.ModelsArgs, " "), err, tail(stderr.String(), 1200))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
 // classify turns a context failure into the error the caller sees. A deadline
 // is a timeout; an explicit cancellation (Ctrl-C, the MCP client going away) is
 // not, and reporting it as one hid why the turn ended.

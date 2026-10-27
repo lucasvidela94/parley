@@ -66,7 +66,7 @@ func (v View) Markdown() string {
 		case "note":
 			fmt.Fprintf(&b, "\n> note from %s (%s): %s\n", m.Author, at, strings.TrimSpace(m.Body))
 		case "error":
-			fmt.Fprintf(&b, "\n**[error from %s, %s]** %s\n", m.Author, at, oneLine(m.Body, 300))
+			fmt.Fprintf(&b, "\n**[error from %s, %s]** %s\n", m.Author, at, oneLine(m.Body, errorLimit))
 		default:
 			label := m.Author
 			if m.Model != "" {
@@ -88,12 +88,22 @@ func (v View) CloseSummary() string {
 	return s
 }
 
+// turns counts every turn that was spent, including the ones that ended in an
+// error, and says how many of those there were.
 func turns(v View) string {
+	s := fmt.Sprintf("turns: %d", v.Conversation.Turns)
 	if v.Conversation.MaxTurns > 0 {
-		return fmt.Sprintf("turns: %d/%d", v.Conversation.Turns, v.Conversation.MaxTurns)
+		s = fmt.Sprintf("turns: %d/%d", v.Conversation.Turns, v.Conversation.MaxTurns)
 	}
-	return fmt.Sprintf("turns: %d", v.Conversation.Turns)
+	if v.Failed > 0 {
+		s += fmt.Sprintf(" (%d failed)", v.Failed)
+	}
+	return s
 }
+
+// errorLimit is the harness stderr tail (1200) plus its prefix: an error
+// usually ends with the remedy, so cutting it short loses the useful part.
+const errorLimit = 1400
 
 func oneLine(s string, limit int) string {
 	s = strings.Join(strings.Fields(s), " ")

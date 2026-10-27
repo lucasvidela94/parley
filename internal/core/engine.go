@@ -64,8 +64,9 @@ type View struct {
 	Messages     []store.Message    `json:"messages"`
 	Offset       int                `json:"offset"`
 	Total        int                `json:"total"`
-	CostUSD      float64            `json:"cost_usd,omitempty"` // whole conversation, when the harness reports it
-	Authors      []Author           `json:"participants"`       // whole conversation, in order of first turn
+	Failed       int                `json:"failed_turns,omitempty"` // whole conversation: turns spent that ended in an error
+	CostUSD      float64            `json:"cost_usd,omitempty"`     // whole conversation, when the harness reports it
+	Authors      []Author           `json:"participants"`           // whole conversation, in order of first turn
 }
 
 // Author is one voice in a transcript and the models it spoke with.
@@ -98,6 +99,32 @@ func NewWith(cfg config.Config, st *store.Store, factory func(config.Participant
 func (e *Engine) Identity() string      { return e.identity }
 func (e *Engine) Config() config.Config { return e.cfg }
 func (e *Engine) Shutdown() error       { return e.st.Close() }
+
+// Reload re-reads the config when its file was edited since it was loaded, so
+// a long-lived MCP server does not keep serving a stale participant list. A
+// broken edit is returned and the last good config stays in place. Identity and
+// the store are fixed when the process starts and are not reloaded.
+func (e *Engine) Reload() error {
+	if !e.cfg.Changed() {
+		return nil
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("config changed but cannot be read, keeping the previous one: %w", err)
+	}
+	e.cfg = cfg
+	return nil
+}
+
+// Models returns what the participant's harness prints when asked for its
+// models, untouched: parley does not interpret model ids.
+func (e *Engine) Models(ctx context.Context, participant string) (string, error) {
+	spec, _, err := e.cfg.Spec(participant)
+	if err != nil {
+		return "", err
+	}
+	return harness.ListModels(ctx, spec, e.participantDir(participant))
+}
 
 func (e *Engine) Participants() []map[string]string {
 	names := make([]string, 0, len(e.cfg.Participants))
@@ -262,6 +289,9 @@ func (e *Engine) Read(ctx context.Context, id string) (View, error) {
 	for j := range msgs {
 		m := &msgs[j]
 		v.CostUSD += m.CostUSD
+		if m.Kind == "error" {
+			v.Failed++
+		}
 		i, ok := seen[m.Author]
 		if !ok {
 			i = len(v.Authors)

@@ -457,3 +457,113 @@ func TestParticipantsSayWhenReadOnlyIsNotEnforced(t *testing.T) {
 		}
 	}
 }
+
+func TestReloadPicksUpAnEditedConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PARLEY_CONFIG", path)
+	write := func(body string, at time.Time) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	write(`{"store":"`+filepath.Join(t.TempDir(), "p.db")+`","participants":{"claude":{"harness":"claude"}}}`, now)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(cfg.StorePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := New(cfg, st)
+	t.Cleanup(func() { e.Shutdown() })
+
+	if err := e.Reload(); err != nil || len(e.Participants()) != 1 {
+		t.Fatalf("untouched config: %v %v", err, e.Participants())
+	}
+
+	write(`{"participants":{"claude":{"harness":"claude"},"cursor-opus":{"harness":"cursor","model":"claude-opus-5-5-high"}}}`, now.Add(time.Hour))
+	if err := e.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.Participants(); len(got) != 2 || got[1]["name"] != "cursor-opus" || got[1]["model"] != "claude-opus-5-5-high" {
+		t.Fatalf("the edit was not picked up: %v", got)
+	}
+
+	write(`{ not json`, now.Add(2*time.Hour))
+	if err := e.Reload(); err == nil {
+		t.Fatal("a broken edit must be reported")
+	}
+	if len(e.Participants()) != 2 {
+		t.Fatal("a broken edit must leave the last good config in place")
+	}
+}
+
+func TestFailedTurnsAreCountedApartFromReplies(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"ERR:boom", "fine"}})
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "flaky", "", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q1"}); err == nil {
+		t.Fatal("expected the harness error")
+	}
+	view, err = env.e.Read(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Failed != 1 {
+		t.Fatalf("failed turns = %d", view.Failed)
+	}
+	if !strings.Contains(view.Markdown(), "turns: 1/3 (1 failed)") {
+		t.Fatalf("the header must say a spent turn did not produce a reply:\n%s", view.Markdown())
+	}
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q2"}); err != nil {
+		t.Fatal(err)
+	}
+	view, _ = env.e.Read(ctx, id)
+	if !strings.Contains(view.Markdown(), "turns: 2/3 (1 failed)") {
+		t.Fatalf("%s", view.Markdown())
+	}
+}
+
+func TestErrorKeepsTheHarnessRemedyInTheTranscript(t *testing.T) {
+	remedy := "Pass --trust, --yolo, or -f if you trust this directory"
+	long := "Workspace Trust Required " + strings.Repeat("Cursor Agent can execute code. ", 12) + remedy
+	env := newTestEngine(t, map[string][]string{"claude": {"ERR:" + long}})
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "trust", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	_, _ = env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q"})
+	view, _ = env.e.Read(ctx, id)
+	if !strings.Contains(view.Markdown(), remedy) {
+		t.Fatalf("the error was cut before the remedy:\n%s", view.Markdown())
+	}
+}
+
+func TestModelsAsksTheHarnessForItsOwnList(t *testing.T) {
+	env := newTestEngine(t, nil)
+	env.e.cfg.Participants["lister"] = config.Participant{Spec: &harness.Spec{Bin: "sh", ModelsArgs: []string{"-c", "printf 'm1\nm2'"}}}
+	env.e.cfg.Participants["mute"] = config.Participant{Spec: &harness.Spec{Bin: "sh"}}
+	out, err := env.e.Models(context.Background(), "lister")
+	if err != nil || out != "m1\nm2" {
+		t.Fatalf("%q %v", out, err)
+	}
+	if _, err := env.e.Models(context.Background(), "mute"); err == nil || !strings.Contains(err.Error(), "cannot list") {
+		t.Fatalf("a harness with no listing command must say so: %v", err)
+	}
+	if _, err := env.e.Models(context.Background(), "ghost"); err == nil {
+		t.Fatal("unknown participant")
+	}
+}

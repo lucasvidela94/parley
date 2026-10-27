@@ -2,8 +2,11 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/lucasvidela94/parley/internal/harness"
 )
@@ -112,5 +115,36 @@ func TestReadOnlyDefault(t *testing.T) {
 	}
 	if (Participant{Permission: "write"}).ReadOnly() {
 		t.Fatal("write must enable writes")
+	}
+}
+
+func TestChangedNoticesAnEditedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PARLEY_CONFIG", path)
+	if err := os.WriteFile(path, []byte(`{"participants":{"a":{"harness":"claude"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Changed() {
+		t.Fatal("a config nobody touched is not stale")
+	}
+	if err := os.WriteFile(path, []byte(`{"participants":{"b":{"harness":"codex"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(path, later, later); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Changed() {
+		t.Fatal("an edited file must be reported as changed")
+	}
+}
+
+func TestChangedIsFalseWithoutAFile(t *testing.T) {
+	if Default().Changed() {
+		t.Fatal("a config built in memory has no file to go stale")
 	}
 }

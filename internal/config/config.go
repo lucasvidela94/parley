@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/lucasvidela94/parley/internal/harness"
 )
@@ -33,6 +34,7 @@ type Config struct {
 	Store           string                 `json:"store,omitempty"`
 	Participants    map[string]Participant `json:"participants"`
 	path            string
+	mtime           time.Time // of the file this config was read from
 }
 
 func Path() string {
@@ -102,8 +104,21 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
 	cfg.path = path
+	if fi, err := os.Stat(path); err == nil {
+		cfg.mtime = fi.ModTime()
+	}
 	cfg.normalize()
 	return cfg, nil
+}
+
+// Changed reports whether the file this config was read from has been edited
+// since. A config that never came from a file is never stale.
+func (c Config) Changed() bool {
+	if c.path == "" || c.mtime.IsZero() {
+		return false
+	}
+	fi, err := os.Stat(c.path)
+	return err == nil && !fi.ModTime().Equal(c.mtime)
 }
 
 func (c *Config) normalize() {
@@ -216,6 +231,9 @@ func merge(base, over harness.Spec) harness.Spec {
 	}
 	if over.ModelArgs != nil {
 		base.ModelArgs = over.ModelArgs
+	}
+	if over.ModelsArgs != nil {
+		base.ModelsArgs = over.ModelsArgs
 	}
 	if over.ReadOnlyArgs != nil {
 		base.ReadOnlyArgs = over.ReadOnlyArgs

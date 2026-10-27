@@ -170,6 +170,30 @@ func TestCLIStartsCommand(t *testing.T) {
 	}
 }
 
+func TestListModelsRunsTheSpecCommand(t *testing.T) {
+	spec := Spec{Bin: "sh", ModelsArgs: []string{"-c", "printf 'a\\nb\\n'"}}
+	out, err := ListModels(context.Background(), spec, "")
+	if err != nil || out != "a\nb" {
+		t.Fatalf("%q %v", out, err)
+	}
+	if _, err := ListModels(context.Background(), Spec{Bin: "sh"}, ""); err == nil {
+		t.Fatal("a spec with no models command must say so")
+	}
+	failing := Spec{Bin: "sh", ModelsArgs: []string{"-c", "echo no >&2; exit 2"}}
+	if _, err := ListModels(context.Background(), failing, ""); err == nil || !strings.Contains(err.Error(), "no") {
+		t.Fatalf("the command's stderr must reach the caller: %v", err)
+	}
+}
+
+func TestCursorAndOpencodeCanListTheirModels(t *testing.T) {
+	for _, name := range []string{"cursor", "opencode", "pi"} {
+		s, _ := Known(name)
+		if len(s.ModelsArgs) == 0 {
+			t.Errorf("%s has a listing command and the spec does not use it", name)
+		}
+	}
+}
+
 func TestCLICommandFailureSurfacesStderr(t *testing.T) {
 	spec := Spec{Bin: "sh", Start: []string{"-c", "echo fallo >&2; exit 3"}, Output: "text"}
 	if _, err := NewCLI(spec).Start(context.Background(), "", Options{}); err == nil {
