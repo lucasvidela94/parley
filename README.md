@@ -147,7 +147,8 @@ the order it first spoke.
 
 ```bash
 parley update --check   # what would change
-parley update           # download, verify sha256, replace the binary
+parley update           # download, verify sha256, replace the binary, refresh the skill
+parley setup --skills   # refresh only the skill (update runs this with the new binary)
 ```
 
 Updates come from GitHub releases. Builds made with `go install` at a tagged version can

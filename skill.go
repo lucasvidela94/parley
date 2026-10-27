@@ -14,7 +14,8 @@ import (
 var skillMarkdown []byte
 
 // installSkillFiles writes the skill into the skill directory of every harness
-// present on this machine.
+// present on this machine. Every harness it touched is in the result: nil for
+// installed, the error otherwise.
 func installSkillFiles() map[string]error {
 	home, _ := os.UserHomeDir()
 	dirs := map[string]string{
@@ -32,9 +33,7 @@ func installSkillFiles() map[string]error {
 			out[harness] = err
 			continue
 		}
-		if err := os.WriteFile(filepath.Join(target, "SKILL.md"), skillMarkdown, 0o600); err != nil {
-			out[harness] = err
-		}
+		out[harness] = os.WriteFile(filepath.Join(target, "SKILL.md"), skillMarkdown, 0o600)
 	}
 	return out
 }

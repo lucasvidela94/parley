@@ -7,10 +7,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -93,6 +95,7 @@ func usage() {
   parley update [--check] [--force]
   parley mcp                 # MCP server over stdio (launched by the harness)
   parley setup [--write]     # register the MCP server in every detected harness
+  parley setup --skills      # only refresh the usage skill (update does this)
   parley harnesses           # known CLIs and which ones are verified
   parley probe -- <cmd...>   # inspect a CLI to build its spec
 
@@ -427,14 +430,25 @@ func cmdUpdate(args []string) error {
 		return err
 	}
 	fmt.Printf("updated to %s (%s)\n", rel.Tag, exe)
+	// This process still embeds the old skill; the new binary has the new one.
+	out, err := exec.CommandContext(ctx, exe, "setup", "--skills").CombinedOutput()
+	fmt.Print(string(out))
+	if err != nil {
+		return fmt.Errorf("binary updated, but the skill was not: %w (run `parley setup --skills`)", err)
+	}
 	return nil
 }
 
 func cmdSetup(args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	write := fs.Bool("write", false, "apply the changes")
+	skillsOnly := fs.Bool("skills", false, "only install the usage skill (what `update` runs)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *skillsOnly {
+		installSkills(true)
+		return nil
 	}
 
 	cfg, err := config.Load()
@@ -516,8 +530,9 @@ func printIntegrations(exe string, write bool) {
 
 func installSkills(write bool) {
 	if write {
-		for name, err := range installSkillFiles() {
-			if err != nil {
+		res := installSkillFiles()
+		for _, name := range slices.Sorted(maps.Keys(res)) {
+			if err := res[name]; err != nil {
 				fmt.Printf("skill %s: %v\n", name, err)
 			} else {
 				fmt.Printf("parley skill installed for %s\n", name)
