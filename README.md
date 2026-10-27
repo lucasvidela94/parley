@@ -184,6 +184,7 @@ One declarative adapter, no Go required. A harness is a spec:
 | `text_path` | dotted path to the answer text (`result`, `part.text`, …) |
 | `text_filter_path` / `text_filter_equals` | for JSONL: which lines count |
 | `error_path` / `error_event_type` / `error_bool_path` | how a failure shows up |
+| `model_keys_path` | JSON output only: dotted path to an object whose keys are the models the turn used (claude's `modelUsage`). Recorded as the message's model when the participant sets none; a configured `model` wins. Cursor, codex and opencode do not report one, so their transcripts stay blank |
 | `models_args` | argv that makes the CLI print its models; `parley models <name>` runs it and shows the output as is (built in for opencode, cursor and pi) |
 | `read_only_args` / `write_args` | appended when the turn is read-only / may write |
 | `model_args` | appended when the participant sets `model` (`{model}` is substituted) |

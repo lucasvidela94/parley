@@ -28,6 +28,7 @@ type fake struct {
 	started int
 	cont    int
 	running chan struct{}
+	reports string // the model the harness says it used, like claude does
 }
 
 func (f *fake) Name() string       { return f.name }
@@ -57,7 +58,7 @@ func (f *fake) reply(ctx context.Context, prompt string, o harness.Options, cont
 	case strings.HasPrefix(out, "ERR:"):
 		return harness.Reply{}, errors.New(strings.TrimPrefix(out, "ERR:"))
 	}
-	return harness.Reply{Text: out}, nil
+	return harness.Reply{Text: out, Model: f.reports}, nil
 }
 
 func (f *fake) Start(ctx context.Context, prompt string, o harness.Options) (harness.Reply, error) {
@@ -603,6 +604,30 @@ func TestSendSaysWhenWriteWasIgnored(t *testing.T) {
 	res, _ = env.e.Send(ctx, SendRequest{To: "claude", Message: "just read"})
 	if res.Notice != "" {
 		t.Fatalf("no write was asked for: %q", res.Notice)
+	}
+}
+
+func TestTranscriptNamesTheModelTheHarnessReported(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"one", "two"}})
+	env.fakes["claude"].reports = "claude-opus-5-5"
+	env.e.cfg.Participants["pinned"] = config.Participant{Harness: "claude", Model: "opus"}
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "who spoke", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	for _, to := range []string{"claude", "pinned"} {
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: to, Message: "q"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	md := func() string { v, _ := env.e.Read(ctx, id); return v.Markdown() }()
+	if !strings.Contains(md, "### claude · claude-opus-5-5") {
+		t.Fatalf("no model configured: the reported one must be recorded:\n%s", md)
+	}
+	if !strings.Contains(md, "### pinned · opus") || strings.Contains(md, "pinned · claude-opus-5-5") {
+		t.Fatalf("a configured model wins over the reported one:\n%s", md)
 	}
 }
 

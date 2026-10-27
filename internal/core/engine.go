@@ -261,6 +261,11 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		// mask the other.
 		return SendResult{Conversation: failed}, errors.Join(err, recordErr)
 	}
+	// A configured model is what the user asked for and wins; otherwise record
+	// the one the harness says it ran, so the transcript says who spoke.
+	if model == "" {
+		model = rep.Model
+	}
 	reply := store.Message{ConversationID: conv.ID, Author: req.To, Kind: "message", Model: model, Body: rep.Text, CostUSD: rep.CostUSD}
 	// The answer is paid for: a signal that lands after it arrives must not
 	// keep it out of the transcript.

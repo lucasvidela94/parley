@@ -104,6 +104,25 @@ func TestPiSpecReadsTextOutput(t *testing.T) {
 	}
 }
 
+func TestParseReportsTheModelTheHarnessUsed(t *testing.T) {
+	s, _ := Known("claude")
+	rep, err := s.Parse(`{"result":"ok","modelUsage":{"claude-opus-5-5":{"inputTokens":1},"claude-haiku-5-5":{"inputTokens":1}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Model != "claude-haiku-5-5, claude-opus-5-5" {
+		t.Fatalf("every model that worked on the turn, sorted: %q", rep.Model)
+	}
+	rep, err = s.Parse(`{"result":"ok"}`)
+	if err != nil || rep.Model != "" {
+		t.Fatalf("a harness that says nothing must not be guessed for: %q %v", rep.Model, err)
+	}
+	other, _ := Known("codex")
+	if other.ModelKeysPath != "" {
+		t.Fatal("codex output carries no model; the spec must not claim one")
+	}
+}
+
 func TestParseClaudeJSON(t *testing.T) {
 	s, _ := Known("claude")
 	rep, err := s.Parse(`{"session_id":"abc","result":"ok","is_error":false,"total_cost_usd":0.12}`)

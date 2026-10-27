@@ -229,6 +229,14 @@ func merge(base, over harness.Spec) harness.Spec {
 	if over.CostPath != "" {
 		base.CostPath = over.CostPath
 	}
+	if over.ModelKeysPath != "" {
+		base.ModelKeysPath = over.ModelKeysPath
+	}
+	return mergeFlagArgs(base, over)
+}
+
+// mergeFlagArgs lets a participant replace the flag lists of its harness spec.
+func mergeFlagArgs(base, over harness.Spec) harness.Spec {
 	if over.ModelArgs != nil {
 		base.ModelArgs = over.ModelArgs
 	}

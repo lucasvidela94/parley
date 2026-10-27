@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -13,7 +14,10 @@ type Reply struct {
 	Text      string
 	SessionID string
 	CostUSD   float64
-	Raw       string
+	// Model is what the harness says it ran, when its output says so. Empty
+	// means unknown, never a guess.
+	Model string
+	Raw   string
 }
 
 // Options are per-call knobs. SessionID is only used when the spec takes the
@@ -54,6 +58,9 @@ type Spec struct {
 	ErrorEventType string `json:"error_event_type,omitempty"`
 	ErrorBoolPath  string `json:"error_bool_path,omitempty"`
 	CostPath       string `json:"cost_path,omitempty"`
+	// ModelKeysPath is a dotted path to an object whose keys are the model ids
+	// the turn used (claude's modelUsage). json output only.
+	ModelKeysPath string `json:"model_keys_path,omitempty"`
 
 	ModelArgs []string `json:"model_args,omitempty"`
 	// ModelsArgs is the argv that makes the CLI print the models it accepts.
@@ -101,6 +108,7 @@ var profiles = map[string]Spec{
 		ErrorPath:     "error",
 		ErrorBoolPath: "is_error",
 		CostPath:      "total_cost_usd",
+		ModelKeysPath: "modelUsage",
 		ModelArgs:     []string{"--model", "{model}"},
 		ReadOnlyArgs:  []string{"--permission-mode", "plan", "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit"},
 		Verified:      true,
@@ -279,6 +287,7 @@ func (s Spec) parseJSON(stdout string) (Reply, error) {
 	if s.CostPath != "" {
 		rep.CostUSD, _ = floatAt(obj, s.CostPath)
 	}
+	rep.Model = keysAt(obj, s.ModelKeysPath)
 	if rep.Text == "" {
 		return rep, fmt.Errorf("reply has no text (%s empty)", s.TextPath)
 	}
@@ -364,6 +373,24 @@ func strAt(obj map[string]any, path string) string {
 		return s
 	}
 	return ""
+}
+
+// keysAt joins the sorted keys of the object at path; empty when there is none.
+func keysAt(obj map[string]any, path string) string {
+	v, ok := at(obj, path)
+	if !ok {
+		return ""
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
 }
 
 func boolAt(obj map[string]any, path string) (bool, bool) {
