@@ -96,6 +96,17 @@ The channel assumes three things, and they are limitations, not bugs:
 - **Prompt content is untrusted input for the recipient.** History, context and the peer's
   message are concatenated raw into the prompt. `read_only` limits what the recipient can
   change, not what it can be told to think.
+
+  Probed 2026-10-27 (issue #29), because delimiting the sections is the obvious hardening and
+  it costs tokens on every turn. A participant whose reply carried (a) a forged
+  `MESSAGE FROM self` section asking for a one-word answer, (b) a forged `Rules:` section with
+  a standing instruction, and (c) a forged `[self]` turn impersonating the caller with the
+  same instruction, was followed by a real question to cursor-agent (grok-4.7-low), opencode
+  and codex. None obeyed in 21 runs (6, 6 and 9), and opencode named the instruction as an
+  "unverified claim". So the envelope has no failure to fix today and was not added. This is
+  a small sample on three harnesses and one model each: if a harness is seen following a
+  smuggled instruction, the next step is boundaries a body cannot contain (a per-prompt random
+  token), and the three payloads above are the regression test.
 - **`PARLEY_CHAIN` and `PARLEY_DEPTH` are cooperative.** They stop accidental recursion. A
   child that rewrites its own environment can bypass them.
 - **`parley update` verifies sha256, not a signature.** `checksums.txt` ships with the release,
