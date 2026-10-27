@@ -154,6 +154,9 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 			return "", err
 		}
 		out := res.Reply.Body
+		if res.Notice != "" {
+			out += "\n\n(notice: " + res.Notice + ")"
+		}
 		if res.Conversation.Status == "closed" {
 			out += "\n\n(ephemeral conversation `" + res.Conversation.ID + "` closed)"
 		} else {
@@ -230,7 +233,9 @@ func tools() []any {
 					"conversation_id": map[string]any{"type": "string", "description": "Optional: continue that conversation"},
 					"context":         map[string]any{"type": "string", "description": "Extra context for this turn"},
 					"write": map[string]any{"type": "boolean", "description": "Allow the recipient to edit files (default false). Without it the harness runs " +
-						"in its read-only mode (see participants); a harness with no such mode is marked 'not enforced'."},
+						"in its read-only mode (see participants); a harness with no such mode is marked 'not enforced'. " +
+						"Editing needs both this flag and permission \"write\" for the participant in the config; " +
+						"with a read_only participant the flag is ignored and the result says so."},
 					"timeout_s": map[string]any{"type": "integer"},
 				},
 			},

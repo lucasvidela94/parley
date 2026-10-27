@@ -552,6 +552,60 @@ func TestErrorKeepsTheHarnessRemedyInTheTranscript(t *testing.T) {
 	}
 }
 
+func TestPromptAsksToReadBeforeClaimingAndToListWhatWasNotRead(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"ok"}})
+	if _, err := env.e.Send(context.Background(), SendRequest{To: "claude", Message: "review x"}); err != nil {
+		t.Fatal(err)
+	}
+	p := env.fakes["claude"].lastPrompt()
+	for _, want := range []string{"read it before", "files you did not read"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("the prompt does not say %q:\n%s", want, p)
+		}
+	}
+}
+
+func TestParticipantsSayBothSwitchesAreNeededToWrite(t *testing.T) {
+	env := newTestEngine(t, nil)
+	env.e.cfg.Participants["editor"] = config.Participant{Harness: "claude", Permission: "write"}
+	perm := map[string]string{}
+	for _, p := range env.e.Participants() {
+		perm[p["name"]] = p["permission"]
+	}
+	if !strings.Contains(perm["claude"], `permission: "write"`) {
+		t.Errorf("a read_only participant must say how to allow edits: %q", perm["claude"])
+	}
+	if !strings.Contains(perm["editor"], "write=true") {
+		t.Errorf("a write participant must say the call needs write=true too: %q", perm["editor"])
+	}
+}
+
+func TestSendSaysWhenWriteWasIgnored(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"a", "b"}})
+	env.e.cfg.Participants["editor"] = config.Participant{Harness: "claude", Permission: "write"}
+	ctx := context.Background()
+
+	res, err := env.e.Send(ctx, SendRequest{To: "claude", Message: "edit it", Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Notice, `"permission": "write"`) {
+		t.Fatalf("write=true on a read_only participant must be reported: %q", res.Notice)
+	}
+
+	res, err = env.e.Send(ctx, SendRequest{To: "editor", Message: "edit it", Write: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Notice != "" {
+		t.Fatalf("nothing was ignored: %q", res.Notice)
+	}
+	res, _ = env.e.Send(ctx, SendRequest{To: "claude", Message: "just read"})
+	if res.Notice != "" {
+		t.Fatalf("no write was asked for: %q", res.Notice)
+	}
+}
+
 func TestModelsAsksTheHarnessForItsOwnList(t *testing.T) {
 	env := newTestEngine(t, nil)
 	env.e.cfg.Participants["lister"] = config.Participant{Spec: &harness.Spec{Bin: "sh", ModelsArgs: []string{"-c", "printf 'm1\nm2'"}}}

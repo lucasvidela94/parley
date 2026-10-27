@@ -192,6 +192,9 @@ func cmdSend(args []string) error {
 		return jsonOut(res)
 	}
 	fmt.Println(strings.TrimSpace(res.Reply.Body))
+	if res.Notice != "" {
+		fmt.Fprintf(os.Stderr, "\n[notice: %s]\n", res.Notice)
+	}
 	if res.Conversation.Status == "closed" {
 		fmt.Fprintf(os.Stderr, "\n[ephemeral conversation %s]\n", res.Conversation.ID)
 	}

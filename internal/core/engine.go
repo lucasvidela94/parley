@@ -55,6 +55,9 @@ type SendResult struct {
 	Conversation store.Conversation `json:"conversation"`
 	Reply        store.Message      `json:"reply"`
 	CostUSD      float64            `json:"cost_usd"`
+	// Notice is something the caller should know about how the turn ran, e.g.
+	// that write=true was ignored. Empty when there is nothing to say.
+	Notice string `json:"notice,omitempty"`
 }
 
 // View is a conversation and a window of its messages: Messages starts at
@@ -135,9 +138,9 @@ func (e *Engine) Participants() []map[string]string {
 	out := make([]map[string]string, 0, len(names))
 	for _, n := range names {
 		p := e.cfg.Participants[n]
-		perm := "read_only"
+		perm := `read_only (edits also need permission: "write" in the config)`
 		if !p.ReadOnly() {
-			perm = "write"
+			perm = "write (a call must also pass write=true)"
 		} else if s, _, err := e.cfg.Spec(n); err == nil && !s.EnforcesReadOnly() {
 			// Say so instead of pretending: without read-only flags the only
 			// restriction is a line in the prompt.
@@ -271,7 +274,15 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		_ = e.st.SetStatus(ctx, conv.ID, "closed")
 	}
 	conv, _ = e.st.Conversation(ctx, conv.ID)
-	return SendResult{Conversation: conv, Reply: reply, CostUSD: rep.CostUSD}, nil
+	return SendResult{Conversation: conv, Reply: reply, CostUSD: rep.CostUSD, Notice: e.writeNotice(req)}, nil
+}
+
+// writeNotice explains a write=true that the participant's config overrides.
+func (e *Engine) writeNotice(req SendRequest) string {
+	if !req.Write || !e.cfg.Participants[req.To].ReadOnly() {
+		return ""
+	}
+	return fmt.Sprintf(`write=true was ignored: %s is read_only; set "permission": "write" for it in the config to allow edits`, req.To)
 }
 
 // Read returns a conversation and its messages.

@@ -30,6 +30,7 @@ Mode: %s.
 
 Rules:
 - Answer the message. Do not invent: every technical claim must rest on something verifiable (file:line, command, tool output). What you cannot verify, state as an open question.
+- If a file you can read bears on a claim, read it before making the claim. If you did not, end with the files you did not read.
 - If it asks you to do something, do it or explain why not. If it is a question, answer it.
 - You do not have to close with a conclusion: if the other side wants to keep going, it will write again.
 `, in.name, in.identity, in.dir, mode)

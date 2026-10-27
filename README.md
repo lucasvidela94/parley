@@ -237,7 +237,7 @@ it returns, which is what you need to fill `text_path` and `session`.
 | `model` | optional, native to that harness; parley passes it through untouched. Omit it for the harness default |
 | `args` | optional extra argv, appended after the spec's flags |
 | `dir` | working directory for this participant's turns (default: where parley runs) |
-| `permission` | `read_only` (default) or `write` |
+| `permission` | `read_only` (default) or `write`. A peer edits only when this is `write` **and** the call passes `--write` / `write=true`; with a `read_only` participant the flag is ignored and the result says so |
 | `spec` | an inline spec, merged over the harness spec (see above) |
 
 Participants are names, not harnesses: two entries on the same harness with different models
