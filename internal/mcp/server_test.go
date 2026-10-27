@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lucasvidela94/parley/internal/config"
 	"github.com/lucasvidela94/parley/internal/core"
@@ -14,18 +16,28 @@ import (
 	"github.com/lucasvidela94/parley/internal/store"
 )
 
-type fakeH struct{ answer string }
+type fakeH struct {
+	answer    string
+	lastModel string // the model of the last call, to see what reached the harness
+}
 
 func (f *fakeH) Name() string       { return "fake" }
 func (f *fakeH) Spec() harness.Spec { return harness.Spec{Bin: "fake"} }
 func (f *fakeH) Start(ctx context.Context, p string, o harness.Options) (harness.Reply, error) {
+	f.lastModel = o.Model
 	return harness.Reply{Text: f.answer}, nil
 }
 func (f *fakeH) Continue(ctx context.Context, p string, o harness.Options) (harness.Reply, error) {
+	f.lastModel = o.Model
 	return harness.Reply{Text: f.answer}, nil
 }
 
 func newEngine(t *testing.T) *core.Engine {
+	t.Helper()
+	return newEngineWith(t, &fakeH{answer: "answer"})
+}
+
+func newEngineWith(t *testing.T, h harness.Harness) *core.Engine {
 	t.Helper()
 	t.Chdir(t.TempDir())
 	cfg := config.Default()
@@ -35,7 +47,7 @@ func newEngine(t *testing.T) *core.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := core.NewWith(cfg, st, func(config.Participant) harness.Harness { return &fakeH{answer: "answer"} })
+	e := core.NewWith(cfg, st, func(config.Participant) harness.Harness { return h })
 	t.Cleanup(func() { e.Shutdown() })
 	return e
 }
@@ -116,26 +128,83 @@ func TestServe(t *testing.T) {
 	}
 }
 
-func TestModelSelectionIsReachableOverMCP(t *testing.T) {
-	var send, models map[string]any
-	for _, entry := range tools() {
-		tool := entry.(map[string]any)
-		switch tool["name"] {
-		case "send_message":
-			send = tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
-		case "models":
-			models = tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+func TestSendMessageModelReachesTheHarness(t *testing.T) {
+	h := &fakeH{answer: "answer"}
+	e := newEngineWith(t, h)
+	s := New(e, "test")
+	ctx := context.Background()
+	if _, err := s.dispatch(ctx, "send_message", map[string]any{"to": "claude", "message": "hi", "model": "opus"}); err != nil {
+		t.Fatal(err)
+	}
+	if h.lastModel != "opus" {
+		t.Fatalf("the model argument never reached the harness: %q", h.lastModel)
+	}
+	if _, err := s.dispatch(ctx, "send_message", map[string]any{"to": "claude", "message": "again"}); err != nil {
+		t.Fatal(err)
+	}
+	if h.lastModel != "" {
+		t.Fatalf("a call without model must not inherit the previous override: %q", h.lastModel)
+	}
+}
+
+func TestServerPicksUpAnEditedConfigBetweenCalls(t *testing.T) {
+	t.Chdir(t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PARLEY_CONFIG", path)
+	write := func(participants string, at time.Time) {
+		t.Helper()
+		body := `{"store":"` + filepath.Join(filepath.Dir(path), "p.db") + `","participants":` + participants + `}`
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if _, ok := send["model"]; !ok {
-		t.Fatal("send_message must take a model")
+	now := time.Now()
+	write(`{"claude":{"harness":"claude"}}`, now)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := models["participant"]; !ok {
-		t.Fatal("the models tool is missing")
+	st, err := store.Open(cfg.StorePath())
+	if err != nil {
+		t.Fatal(err)
 	}
+	e := core.NewWith(cfg, st, func(config.Participant) harness.Harness { return &fakeH{answer: "answer"} })
+	t.Cleanup(func() { e.Shutdown() })
+	s := New(e, "test")
+
+	listed := func() string {
+		t.Helper()
+		resp := s.call(context.Background(), json.RawMessage(`{"name":"participants","arguments":{}}`))
+		raw, _ := json.Marshal(resp.Result)
+		return string(raw)
+	}
+	if got := listed(); strings.Contains(got, "cursor-opus") {
+		t.Fatalf("not configured yet: %s", got)
+	}
+	write(`{"claude":{"harness":"claude"},"cursor-opus":{"harness":"cursor","model":"claude-opus-5-5-high"}}`, now.Add(time.Hour))
+	if got := listed(); !strings.Contains(got, "cursor-opus") || !strings.Contains(got, "claude-opus-5-5-high") {
+		t.Fatalf("the edit must show up on the next call without restarting the server: %s", got)
+	}
+
+	write(`{ broken`, now.Add(2*time.Hour))
+	resp := s.call(context.Background(), json.RawMessage(`{"name":"participants","arguments":{}}`))
+	raw, _ := json.Marshal(resp.Result)
+	if !strings.Contains(string(raw), `"isError":true`) || !strings.Contains(string(raw), "keeping the previous one") {
+		t.Fatalf("a broken edit must be an error that says what happened: %s", raw)
+	}
+}
+
+func TestModelsToolReportsTheHarnessListing(t *testing.T) {
 	s := New(newEngine(t), "test")
 	if _, err := s.dispatch(context.Background(), "models", map[string]any{"participant": "ghost"}); err == nil || !strings.Contains(err.Error(), "unknown participant") {
 		t.Fatalf("an unknown participant must be reported: %v", err)
+	}
+	// claude's spec has no models_args: the error must say so, not return an empty list.
+	if _, err := s.dispatch(context.Background(), "models", map[string]any{"participant": "claude"}); err == nil || !strings.Contains(err.Error(), "cannot list its models") {
+		t.Fatalf("a harness that cannot list must say so: %v", err)
 	}
 }
 

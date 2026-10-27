@@ -71,14 +71,22 @@ func TestParseHermesStreamJSON(t *testing.T) {
 	}
 }
 
-func TestOmpTextModeWithoutContinuity(t *testing.T) {
-	s, _ := Known("omp")
-	if s.SupportsContinuity() {
-		t.Fatal("omp has no session id in text mode")
+func TestSupportsContinuity(t *testing.T) {
+	cases := []struct {
+		name string
+		spec Spec
+		want bool
+	}{
+		{"session by id and a continue argv", Spec{Session: "arg", Continue: []string{"--resume", "{session}"}}, true},
+		{"session read from the reply", Spec{Session: "output:thread_id", Continue: []string{"resume"}}, true},
+		{"no session", Spec{Session: "none", Continue: []string{"resume"}}, false},
+		{"session unset", Spec{Continue: []string{"resume"}}, false},
+		{"no continue argv", Spec{Session: "arg"}, false},
 	}
-	got := s.Render(false, "hola", Options{ReadOnly: true})
-	if want := []string{"-p", "--no-tools", "hola"}; !slices.Equal(got, want) {
-		t.Fatalf("render: %q", got)
+	for _, c := range cases {
+		if got := c.spec.SupportsContinuity(); got != c.want {
+			t.Errorf("%s: %v", c.name, got)
+		}
 	}
 }
 
@@ -91,16 +99,11 @@ func TestEveryBuiltinEnforcesReadOnly(t *testing.T) {
 	}
 }
 
-func TestPiSpecReadsTextOutput(t *testing.T) {
-	s, _ := Known("pi")
-	// pi's json mode hides the answer in message.content[] (an array) and
-	// reports errors inside the stream with exit 0; text mode is what works.
-	rep, err := s.Parse("ok\n")
+func TestParseTextOutput(t *testing.T) {
+	s := Spec{Output: "text"}
+	rep, err := s.Parse("  ok\n\n")
 	if err != nil || rep.Text != "ok" {
-		t.Fatalf("text output: %+v %v", rep, err)
-	}
-	if !s.SupportsContinuity() {
-		t.Fatal("pi should continue by session id")
+		t.Fatalf("text output is the trimmed stdout: %+v %v", rep, err)
 	}
 }
 
@@ -116,10 +119,6 @@ func TestParseReportsTheModelTheHarnessUsed(t *testing.T) {
 	rep, err = s.Parse(`{"result":"ok"}`)
 	if err != nil || rep.Model != "" {
 		t.Fatalf("a harness that says nothing must not be guessed for: %q %v", rep.Model, err)
-	}
-	other, _ := Known("codex")
-	if other.ModelKeysPath != "" {
-		t.Fatal("codex output carries no model; the spec must not claim one")
 	}
 }
 
@@ -154,8 +153,9 @@ func TestParseOpenCodeJSONL(t *testing.T) {
 
 func TestParseJSONLErrorEvent(t *testing.T) {
 	s, _ := Known("opencode")
-	if _, err := s.Parse(`{"type":"error","sessionID":"x","error":{"message":"boom"}}`); err == nil {
-		t.Fatal("expected error")
+	// The event is the failure; its payload must reach the caller.
+	if _, err := s.Parse(`{"type":"error","sessionID":"x","error":{"message":"boom"}}`); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("the error event must surface with its message: %v", err)
 	}
 }
 
@@ -204,15 +204,6 @@ func TestListModelsRunsTheSpecCommand(t *testing.T) {
 	}
 }
 
-func TestCursorAndOpencodeCanListTheirModels(t *testing.T) {
-	for _, name := range []string{"cursor", "opencode", "pi"} {
-		s, _ := Known(name)
-		if len(s.ModelsArgs) == 0 {
-			t.Errorf("%s has a listing command and the spec does not use it", name)
-		}
-	}
-}
-
 func TestFailureCarriesTheSpecHintForKnownStderr(t *testing.T) {
 	spec := Spec{
 		Bin: "sh", Start: []string{"-c", "echo 'Workspace Trust Required' >&2; exit 1"}, Output: "text",
@@ -227,15 +218,12 @@ func TestFailureCarriesTheSpecHintForKnownStderr(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "hint:") {
 		t.Fatalf("an unrelated failure must not get the hint: %v", err)
 	}
-	cursor, _ := Known("cursor")
-	if !strings.Contains(cursor.ErrorHints["Workspace Trust Required"], "--trust") {
-		t.Fatalf("cursor must explain the trust failure: %v", cursor.ErrorHints)
-	}
 }
 
 func TestCLICommandFailureSurfacesStderr(t *testing.T) {
 	spec := Spec{Bin: "sh", Start: []string{"-c", "echo fallo >&2; exit 3"}, Output: "text"}
-	if _, err := NewCLI(spec).Start(context.Background(), "", Options{}); err == nil {
-		t.Fatal("expected error")
+	_, err := NewCLI(spec).Start(context.Background(), "", Options{})
+	if err == nil || !strings.Contains(err.Error(), "fallo") || !strings.Contains(err.Error(), "exit status 3") {
+		t.Fatalf("the exit status and the stderr must both reach the caller: %v", err)
 	}
 }

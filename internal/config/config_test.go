@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -21,15 +22,16 @@ func TestDefaultIsEmpty(t *testing.T) {
 	}
 }
 
-func TestSpecFromHarness(t *testing.T) {
+func TestSpecFromHarnessIsTheKnownSpecUntouched(t *testing.T) {
 	c := Default()
-	c.Participants["rev"] = Participant{Harness: "claude", Model: "opus"}
+	// Model and args belong to the call, not to the spec.
+	c.Participants["rev"] = Participant{Harness: "claude", Model: "opus", Args: []string{"--x"}}
 	s, _, err := c.Spec("rev")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Bin != "claude" || s.TextPath != "result" {
-		t.Fatalf("%+v", s)
+	if known, _ := harness.Known("claude"); !reflect.DeepEqual(s, known) {
+		t.Fatalf("a participant with no inline spec must resolve to its harness spec:\ngot  %+v\nwant %+v", s, known)
 	}
 }
 
@@ -84,13 +86,39 @@ func TestReadOnlyArgsPerParticipant(t *testing.T) {
 	}
 }
 
-func TestSpecCustomOnly(t *testing.T) {
+func TestInlineSpecReplacesHintsAndListingOfTheHarness(t *testing.T) {
 	c := Default()
-	c.Participants["y"] = Participant{Spec: &harness.Spec{
-		Bin: "otro", Start: []string{"go"}, Output: "text", TextPath: "",
+	c.Participants["cur"] = Participant{Harness: "cursor", Spec: &harness.Spec{
+		ErrorHints: map[string]string{"quota": "wait"},
+		ModelsArgs: []string{"list"},
 	}}
-	if _, _, err := c.Spec("y"); err != nil {
+	c.Participants["plain"] = Participant{Harness: "cursor"}
+	s, _, err := c.Spec("cur")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(s.ErrorHints, map[string]string{"quota": "wait"}) || !slices.Equal(s.ModelsArgs, []string{"list"}) {
+		t.Fatalf("the participant's own hints and listing must replace the harness's: %+v", s)
+	}
+	plain, _, _ := c.Spec("plain")
+	if len(plain.ErrorHints) == 0 || len(plain.ModelsArgs) == 0 {
+		t.Fatalf("without an override the harness keeps its own: %+v", plain)
+	}
+}
+
+func TestSpecCustomOnlyGetsDefaults(t *testing.T) {
+	c := Default()
+	c.Participants["y"] = Participant{Spec: &harness.Spec{Bin: "otro", Start: []string{"go"}}}
+	s, _, err := c.Spec("y")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Bin != "otro" || s.Prompt != "stdin" || s.Output != "text" {
+		t.Fatalf("an inline spec with no harness must get stdin/text defaults: %+v", s)
+	}
+	c.Participants["nobin"] = Participant{Spec: &harness.Spec{Start: []string{"go"}}}
+	if _, _, err := c.Spec("nobin"); err == nil {
+		t.Fatal("a spec with no binary cannot run")
 	}
 }
 

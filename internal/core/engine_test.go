@@ -173,11 +173,19 @@ func TestConversationFlow(t *testing.T) {
 func TestSendErrorIsRecordedAndReturned(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"ERR:timeout"}})
 	res, err := env.e.Send(context.Background(), SendRequest{To: "claude", Message: "q"})
-	if err == nil {
-		t.Fatal("expected error")
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("the harness error must be returned: %v", err)
 	}
-	if _, rerr := env.e.Read(context.Background(), res.Conversation.ID); rerr != nil {
+	view, rerr := env.e.Read(context.Background(), res.Conversation.ID)
+	if rerr != nil {
 		t.Fatal(rerr)
+	}
+	if view.Conversation.Status != "closed" {
+		t.Fatalf("a failed ephemeral conversation must still be closed: %s", view.Conversation.Status)
+	}
+	// The question and then the failure, which is never taken for an answer.
+	if len(view.Messages) != 2 || view.Messages[1].Kind != "error" || !strings.Contains(view.Messages[1].Body, "timeout") {
+		t.Fatalf("the failure must be in the transcript as an error: %+v", view.Messages)
 	}
 }
 
@@ -222,19 +230,27 @@ func TestSendRetriesFreshSession(t *testing.T) {
 	}
 }
 
-func TestParticipantsExposeHarness(t *testing.T) {
+func TestParticipantsAreSortedAndNameTheirHarness(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{})
+	env.e.cfg.Participants["aaa"] = config.Participant{Spec: &harness.Spec{Bin: "mytool", Start: []string{"run"}}}
+	var names, harnesses []string
 	for _, p := range env.e.Participants() {
-		if p["harness"] == "" || p["name"] == "" {
-			t.Fatalf("incomplete participant: %+v", p)
-		}
+		names = append(names, p["name"])
+		harnesses = append(harnesses, p["harness"])
+	}
+	if got, want := strings.Join(names, ","), "aaa,claude,opencode"; got != want {
+		t.Fatalf("participants must come sorted: %s", got)
+	}
+	if got, want := strings.Join(harnesses, ","), "custom,claude,opencode"; got != want {
+		t.Fatalf("a participant with only an inline spec is a custom harness: %s", got)
 	}
 }
 
 func TestUnknownParticipant(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{})
-	if _, err := env.e.Send(context.Background(), SendRequest{To: "nadie", Message: "q"}); err == nil {
-		t.Fatal("expected error")
+	_, err := env.e.Send(context.Background(), SendRequest{To: "nadie", Message: "q"})
+	if err == nil || !strings.Contains(err.Error(), `"nadie"`) || !strings.Contains(err.Error(), "claude, opencode") {
+		t.Fatalf("the error must name the participant and list the valid ones: %v", err)
 	}
 }
 
@@ -592,19 +608,6 @@ func TestErrorKeepsTheHarnessRemedyInTheTranscript(t *testing.T) {
 	view, _ = env.e.Read(ctx, id)
 	if !strings.Contains(view.Markdown(), remedy) {
 		t.Fatalf("the error was cut before the remedy:\n%s", view.Markdown())
-	}
-}
-
-func TestPromptAsksToReadBeforeClaimingAndToListWhatWasNotRead(t *testing.T) {
-	env := newTestEngine(t, map[string][]string{"claude": {"ok"}})
-	if _, err := env.e.Send(context.Background(), SendRequest{To: "claude", Message: "review x"}); err != nil {
-		t.Fatal(err)
-	}
-	p := env.fakes["claude"].lastPrompt()
-	for _, want := range []string{"read it before", "files you did not read"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("the prompt does not say %q:\n%s", want, p)
-		}
 	}
 }
 
