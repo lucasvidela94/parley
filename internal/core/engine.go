@@ -49,6 +49,9 @@ type SendRequest struct {
 	Context        string
 	Write          bool
 	TimeoutS       int
+	// Model overrides the participant's configured model for this call only.
+	// It is native to the participant's harness and parley never interprets it.
+	Model string
 }
 
 type SendResult struct {
@@ -231,7 +234,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	if err := e.st.AddMessage(ctx, store.Message{ConversationID: conv.ID, Author: e.identity, Kind: "message", Body: msg}); err != nil {
 		return SendResult{}, fmt.Errorf("record message: %w", err)
 	}
-	model := e.cfg.Participants[req.To].Model
+	model := e.callModel(req)
 
 	in := promptInput{
 		identity:     e.identity,
@@ -244,7 +247,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		conversation: conv,
 	}
 	rep, err := e.cancellable(ctx, conv.ID, req.To, func(ctx context.Context) (harness.Reply, error) {
-		return e.turn(ctx, req.To, requestTimeout(req.TimeoutS, e.cfg.DefaultTimeoutS), req.Write, func(dir string, readOnly bool) string {
+		return e.turn(ctx, turnRequest{name: req.To, model: req.Model, timeout: requestTimeout(req.TimeoutS, e.cfg.DefaultTimeoutS), write: req.Write}, func(dir string, readOnly bool) string {
 			in.dir = dir
 			in.readOnly = readOnly
 			return renderPrompt(in)
@@ -281,6 +284,15 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	}
 	conv, _ = e.st.Conversation(ctx, conv.ID)
 	return SendResult{Conversation: conv, Reply: reply, CostUSD: rep.CostUSD, Notice: e.writeNotice(req)}, nil
+}
+
+// callModel is the model a call asks for: its own override, else the
+// participant's configured one, else empty.
+func (e *Engine) callModel(req SendRequest) string {
+	if req.Model != "" {
+		return req.Model
+	}
+	return e.cfg.Participants[req.To].Model
 }
 
 // writeNotice explains a write=true that the participant's config overrides.
@@ -422,7 +434,23 @@ func (e *Engine) cancellable(ctx context.Context, convID, name string, fn func(c
 	return fn(ctx)
 }
 
-func (e *Engine) turn(ctx context.Context, name string, timeout time.Duration, write bool, build func(dir string, readOnly bool) string) (harness.Reply, error) {
+// turnRequest is what one harness call needs besides the prompt. model is the
+// per-call override, empty to use the participant's own.
+type turnRequest struct {
+	name    string
+	model   string
+	timeout time.Duration
+	write   bool
+}
+
+// modelSep joins a participant and a model override into a session key.
+// Harnesses disagree on resuming a session under another model (claude keeps
+// the old one, codex warns), so each model gets its own session; the history
+// travels in the prompt, so no context is lost.
+const modelSep = "\x1f"
+
+func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string, readOnly bool) string) (harness.Reply, error) {
+	name, timeout := tr.name, tr.timeout
 	spec, p, err := e.cfg.Spec(name)
 	if err != nil {
 		return harness.Reply{}, err
@@ -434,13 +462,18 @@ func (e *Engine) turn(ctx context.Context, name string, timeout time.Duration, w
 	} else {
 		h = harness.NewCLI(spec)
 	}
-	readOnly := e.readOnly(name, write)
+	readOnly := e.readOnly(name, tr.write)
 	opts := harness.Options{Model: p.Model, Dir: dir, ReadOnly: readOnly, Env: e.childEnv(name), Args: p.Args}
+	sessionKey := name
+	if tr.model != "" && tr.model != p.Model {
+		opts.Model = tr.model
+		sessionKey = name + modelSep + tr.model
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	sid, ok, err := e.st.Session(ctx, name, dir)
+	sid, ok, err := e.st.Session(ctx, sessionKey, dir)
 	if err != nil {
 		return harness.Reply{}, err
 	}
@@ -464,7 +497,7 @@ func (e *Engine) turn(ctx context.Context, name string, timeout time.Duration, w
 		sid = opts.SessionID
 	}
 	if sid != "" {
-		_ = e.st.SetSession(ctx, name, dir, sid)
+		_ = e.st.SetSession(ctx, sessionKey, dir, sid)
 	}
 	return rep, nil
 }

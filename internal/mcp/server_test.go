@@ -116,6 +116,29 @@ func TestServe(t *testing.T) {
 	}
 }
 
+func TestModelSelectionIsReachableOverMCP(t *testing.T) {
+	var send, models map[string]any
+	for _, entry := range tools() {
+		tool := entry.(map[string]any)
+		switch tool["name"] {
+		case "send_message":
+			send = tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+		case "models":
+			models = tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+		}
+	}
+	if _, ok := send["model"]; !ok {
+		t.Fatal("send_message must take a model")
+	}
+	if _, ok := models["participant"]; !ok {
+		t.Fatal("the models tool is missing")
+	}
+	s := New(newEngine(t), "test")
+	if _, err := s.dispatch(context.Background(), "models", map[string]any{"participant": "ghost"}); err == nil || !strings.Contains(err.Error(), "unknown participant") {
+		t.Fatalf("an unknown participant must be reported: %v", err)
+	}
+}
+
 func TestReadPagesAndCloseConfirms(t *testing.T) {
 	e := newEngine(t)
 	s := New(e, "test")

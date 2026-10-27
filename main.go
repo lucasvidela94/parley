@@ -95,7 +95,7 @@ func runMaintenance(args []string) error {
 func usage() {
 	fmt.Print(`parley — a channel between agent harnesses
 
-  parley send --to <name> [--in <id>] [--context <text>] [--write] [message]
+  parley send --to <name> [--in <id>] [--context <text>] [--write] [--model <id>] [message]
   parley open --topic <topic> [--context <text>] [--max-turns N]
   parley read <id> [--tail N | --offset N] [--limit N] [--json]
   parley close <id> [--note <text>]
@@ -161,6 +161,7 @@ func cmdSend(args []string) error {
 	contextStr := fs.String("context", "", "extra context")
 	write := fs.Bool("write", false, "allow file edits; without it the harness runs in its read-only mode")
 	timeout := fs.Int("timeout", 0, "timeout in seconds")
+	model := fs.String("model", "", "run this call with this model instead of the participant's own (see `parley models`)")
 	asJSON := fs.Bool("json", false, "JSON output")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -183,7 +184,7 @@ func cmdSend(args []string) error {
 	ctx, stop := signalContext()
 	defer stop()
 	res, err := e.Send(ctx, core.SendRequest{
-		ConversationID: *in, To: *to, Message: msg, Context: *contextStr, Write: *write, TimeoutS: *timeout,
+		ConversationID: *in, To: *to, Message: msg, Context: *contextStr, Write: *write, TimeoutS: *timeout, Model: *model,
 	})
 	if err != nil {
 		return err

@@ -123,6 +123,31 @@ func (s *Server) call(ctx context.Context, raw json.RawMessage) response {
 	}}
 }
 
+func (s *Server) send(ctx context.Context, a map[string]any) (string, error) {
+	res, err := s.e.Send(ctx, core.SendRequest{
+		ConversationID: str(a, "conversation_id"),
+		To:             str(a, "to"),
+		Message:        str(a, "message"),
+		Context:        str(a, "context"),
+		Write:          boolean(a, "write"),
+		TimeoutS:       integer(a, "timeout_s"),
+		Model:          str(a, "model"),
+	})
+	if err != nil {
+		return "", err
+	}
+	out := res.Reply.Body
+	if res.Notice != "" {
+		out += "\n\n(notice: " + res.Notice + ")"
+	}
+	if res.Conversation.Status == "closed" {
+		out += "\n\n(ephemeral conversation `" + res.Conversation.ID + "` closed)"
+	} else {
+		out += "\n\n(conversation `" + res.Conversation.ID + "`)"
+	}
+	return out, nil
+}
+
 func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (string, error) {
 	switch name {
 	case "participants":
@@ -142,27 +167,10 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 		return view.Markdown(), nil
 
 	case "send_message":
-		res, err := s.e.Send(ctx, core.SendRequest{
-			ConversationID: str(a, "conversation_id"),
-			To:             str(a, "to"),
-			Message:        str(a, "message"),
-			Context:        str(a, "context"),
-			Write:          boolean(a, "write"),
-			TimeoutS:       integer(a, "timeout_s"),
-		})
-		if err != nil {
-			return "", err
-		}
-		out := res.Reply.Body
-		if res.Notice != "" {
-			out += "\n\n(notice: " + res.Notice + ")"
-		}
-		if res.Conversation.Status == "closed" {
-			out += "\n\n(ephemeral conversation `" + res.Conversation.ID + "` closed)"
-		} else {
-			out += "\n\n(conversation `" + res.Conversation.ID + "`)"
-		}
-		return out, nil
+		return s.send(ctx, a)
+
+	case "models":
+		return s.e.Models(ctx, str(a, "participant"))
 
 	case "read_conversation":
 		view, err := s.e.Read(ctx, str(a, "id"))
@@ -237,7 +245,19 @@ func tools() []any {
 						"Editing needs both this flag and permission \"write\" for the participant in the config; " +
 						"with a read_only participant the flag is ignored and the result says so."},
 					"timeout_s": map[string]any{"type": "integer"},
+					"model": map[string]any{"type": "string", "description": "Optional: run this call with this model instead of the participant's own. " +
+						"Native to the participant's harness (see the models tool). A model different from the participant's gets its own harness session; the conversation history is still sent."},
 				},
+			},
+		},
+		map[string]any{
+			"name": "models",
+			"description": "List the models a participant's harness accepts as `model`, exactly as the harness prints them. " +
+				"Not every harness can list its models; the error says so.",
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"required":   []string{"participant"},
+				"properties": map[string]any{"participant": map[string]any{"type": "string", "description": "Participant name (see participants)"}},
 			},
 		},
 		map[string]any{

@@ -113,6 +113,7 @@ parley cancel cnv_123                  # stop the turn running in that conversat
 parley close cnv_123 --note "in-memory plus a pending benchmark"
 parley list
 parley models cursor-opus              # what that participant's harness accepts as `model`
+parley send --to cursor --model grok-4.7-high "..."   # this call only, instead of the participant's model
 ```
 
 Without `--in` / `conversation_id` the conversation is ephemeral: created, answered, closed.
@@ -250,6 +251,11 @@ For Cursor, whose model ids carry the effort (`parley models cursor` lists them)
 "cursor-opus": { "harness": "cursor", "model": "claude-opus-5-5-high" },
 "cursor-grok": { "harness": "cursor", "model": "grok-4.7-high" }
 ```
+
+`send_message` takes the same `model` per call, and the `models` MCP tool lists what a
+participant's harness accepts. A model different from the participant's gets its own harness
+session (claude ignores `--model` when it resumes, codex warns), and the conversation history
+still goes in the prompt, so nothing is lost. `parley session reset <name>` clears them all.
 
 A running MCP server notices an edited config file on its next call; a file that no longer
 parses is reported and the previous config stays in use. The identity and the store path are

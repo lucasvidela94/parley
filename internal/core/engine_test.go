@@ -344,7 +344,7 @@ func TestMaxTurnsRefusesTheNextTurn(t *testing.T) {
 
 func TestCancelStopsARunningTurn(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"BLOCK"}})
-	env.e.pollEvery = time.Millisecond
+	env.e.pollEvery = 20 * time.Millisecond // stale after 5 polls: 1ms flaked under -race
 	ctx := context.Background()
 	view, err := env.e.Open(ctx, "slow", "", 0)
 	if err != nil {
@@ -382,7 +382,9 @@ func TestCancelStopsARunningTurn(t *testing.T) {
 
 func TestReadShowsATurnInProgress(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"BLOCK"}})
-	env.e.pollEvery = time.Millisecond
+	// A turn is stale after five missed polls; 1ms would make that 5ms, which
+	// a loaded -race run can miss.
+	env.e.pollEvery = 20 * time.Millisecond
 	ctx := context.Background()
 	view, err := env.e.Open(ctx, "slow", "", 0)
 	if err != nil {
@@ -668,6 +670,72 @@ func TestTranscriptNamesTheModelTheHarnessReported(t *testing.T) {
 	}
 	if !strings.Contains(md, "### pinned · opus") || strings.Contains(md, "pinned · claude-opus-5-5") {
 		t.Fatalf("a configured model wins over the reported one:\n%s", md)
+	}
+}
+
+func TestSendModelOverridesTheParticipantModelForThatCall(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"a", "b", "c"}})
+	env.e.cfg.Participants["claude"] = config.Participant{Harness: "claude", Model: "sonnet"}
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "models", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	for _, model := range []string{"", "opus", ""} {
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q", Model: model}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	opts := env.fakes["claude"].opts
+	if got := []string{opts[0].Model, opts[1].Model, opts[2].Model}; got[0] != "sonnet" || got[1] != "opus" || got[2] != "sonnet" {
+		t.Fatalf("models passed to the harness: %v", got)
+	}
+	view, _ = env.e.Read(ctx, id)
+	if !strings.Contains(view.Markdown(), "### claude · opus") || !strings.Contains(view.Markdown(), "Participants: opencode, claude (sonnet, opus)") {
+		t.Fatalf("the transcript must say which model answered each turn:\n%s", view.Markdown())
+	}
+}
+
+func TestModelOverrideGetsItsOwnSession(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": nil})
+	f := env.fakes["claude"]
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "sessions", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	send := func(model string) {
+		t.Helper()
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "claude", Message: "q", Model: model}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Harnesses disagree on resuming a session with another model (claude keeps
+	// the old one, codex warns), so a different model never resumes the other's.
+	send("")
+	send("")
+	if f.started != 1 || f.cont != 1 {
+		t.Fatalf("plain turns share a session: started=%d cont=%d", f.started, f.cont)
+	}
+	send("opus")
+	if f.started != 2 {
+		t.Fatalf("a new model must start its own session: started=%d cont=%d", f.started, f.cont)
+	}
+	send("opus")
+	send("")
+	if f.started != 2 || f.cont != 3 {
+		t.Fatalf("each model resumes its own session: started=%d cont=%d", f.started, f.cont)
+	}
+
+	if err := env.e.ResetSession(ctx, "claude", ""); err != nil {
+		t.Fatal(err)
+	}
+	send("")
+	send("opus")
+	if f.started != 4 {
+		t.Fatalf("reset must clear the override sessions too: started=%d", f.started)
 	}
 }
 

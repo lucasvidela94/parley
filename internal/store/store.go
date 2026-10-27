@@ -156,10 +156,12 @@ ON CONFLICT(participant, dir) DO UPDATE SET session_id=excluded.session_id, upda
 
 func (s *Store) ClearSession(ctx context.Context, participant, dir string) error {
 	if dir == "" {
-		_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE participant=?`, participant)
+		// A participant's sessions under a model override are keyed
+		// "<participant>\x1f<model>" and go with it.
+		_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE participant=?1 OR substr(participant,1,length(?1)+1)=?1||char(31)`, participant)
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE participant=? AND dir=?`, participant, dir)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE (participant=?1 OR substr(participant,1,length(?1)+1)=?1||char(31)) AND dir=?2`, participant, dir)
 	return err
 }
 

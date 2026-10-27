@@ -11,7 +11,7 @@ It does not decide, vote or schedule turns. The conclusion is yours to write.
 ## Tools
 
 MCP server `parley`: `participants`, `open_conversation`, `send_message`,
-`read_conversation`, `close_conversation`, `list_conversations`.
+`read_conversation`, `close_conversation`, `list_conversations`, `models`.
 
 Same operations from a shell when the MCP server is not registered:
 
@@ -73,6 +73,12 @@ Done when the record exists and lists the objections that stayed open.
   reporting. If `participants` shows `not enforced`, that participant can still edit.
 - **A third voice is a participant.** Two participants on the same harness with different
   `model`s are two voices in one conversation; never run one out of band and paste its reply.
+  For a one-off model, pass `model` to `send_message`; `models(participant)` lists what the
+  harness accepts. A model different from the participant's gets its own harness session,
+  and the history still travels in the prompt.
+- **Writing needs two switches.** `write=true` on the call and `permission: "write"` for the
+  participant in the config; with a `read_only` participant the flag is ignored and the
+  result carries a notice.
 - **Budget.** When the user is short on credits, open with `max_turns`. Killing the client
   does not stop a turn the provider already received.
 - **One turn per participant at a time.** parley does not queue; two concurrent sends to
