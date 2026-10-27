@@ -13,6 +13,10 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   shows them under each reply (`12024 in / 866 out`); `read --json` has `input_tokens` and
   `output_tokens`. New spec fields `input_tokens_path` and `output_tokens_path`; in JSONL every
   line with the field counts, so OpenCode's several steps per turn add up.
+- **A recipe for several voices in the skill** (#33): the same question to N participants with a
+  turn budget, run in parallel from the shell because the MCP server answers one call at a time
+  (13 s against 28 s for three voices in one measured run), and how to synthesize disagreement.
+- README: how to reach any model through a harness without a gateway (#34).
 - **OpenCode cost.** OpenCode reports a cost per step; it is summed per reply and into the cost in
   the `read` header, which only Claude had.
 
