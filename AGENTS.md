@@ -77,6 +77,11 @@ harness is a `Spec` in `internal/harness/spec.go` or inline config — not a new
 change adds an MCP tool or a CLI command, follow `skills/parley-dev/SKILL.md` and update
 the README usage section.
 
+A change a user can see (a flag, a tool, output text, a spec field, a fixed bug) adds an entry
+under `## [Unreleased]` in `CHANGELOG.md`, with the issue number. To release, rename that section
+to the version and date and add its compare link; the release workflow takes the notes from that
+section and fails without them.
+
 ## Review
 
 Read the whole diff before calling it done, even when the gates are green. Green checks

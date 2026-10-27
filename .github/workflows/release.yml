@@ -53,25 +53,33 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - name: checksums
         run: cd dist && sha256sum *.tar.gz *.zip > checksums.txt
+      # The release notes are this version's section of CHANGELOG.md, so a
+      # release cannot go out without them.
+      - name: release notes
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no entries under [$version]" >&2
+            exit 1
+          fi
+          cat notes.md .github/release-install.md > body.md
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
           generate_release_notes: true
-          body: |
-            ## Install
-
-            ```bash
-            curl -fsSL https://github.com/lucasvidela94/parley/releases/latest/download/parley_linux_amd64.tar.gz \
-              | tar -xz -C ~/.local/bin parley
-            parley setup --write
-            ```
-
-            Or `go install github.com/lucasvidela94/parley@latest`.
-
-            Existing installs: `parley update`.
+          body_path: body.md
