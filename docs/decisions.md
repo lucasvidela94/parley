@@ -84,6 +84,16 @@ omp: 429, exit 1): the error shape is verified live, the success shape comes fro
 `docs/message-types.md`. Both specs are therefore `verified: false` until a working provider
 confirms `content[].text` and omp's `--resume <header id>`.
 
+Probed 2026-10-27 for issue #30, no spec added: gemini 0.66.0 (`-p … -o json`) printed
+`{"session_id", "error": {"type", "message", "code": 41}}` for a missing auth method; copilot
+1.0.103 (`-p … --output-format json`) streamed `session.*` events and then
+`Access denied by policy settings`; grok 1.0.70 (`-p … --output-format json`, `--session-id`,
+`--resume`, `--permission-mode plan`) printed `{"type":"error","message":"Not signed in…"}`.
+None completed a turn on the probing machine, so the text, session-id and resume paths are
+unseen. The flags are promising (all three have a headless JSON mode and a session flag) but
+D13 asks for the real output shape, so the specs wait for a machine where each is signed in.
+kilo, qoder and agy were not installed.
+
 Probed 2026-10-27: hermes 0.21.4 (stream-json, session id in the `result` event, errors in
 `result.error`) and omp 18.13.0. omp's JSON mode has pi's shape (`message.content[]`) and is
 the only mode that reports a session id, so its spec is text mode with no continuity; parley
