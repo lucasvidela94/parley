@@ -1,4 +1,6 @@
-<img src="docs/logo.png" alt="parley logo" width="240">
+<p align="center">
+  <img src="docs/logo.png" alt="parley logo" width="240">
+</p>
 
 # parley
 
