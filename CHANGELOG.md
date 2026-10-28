@@ -10,6 +10,11 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 ### Added
 
 - Project logo (`docs/logo.png`), shown at the top of the README.
+- **Array paths** (#26). A spec path segment ending in `[]` walks an array and joins what it
+  finds (`message.content[].text`); `error_bool_path` is true when any element is. Pi and omp
+  now run in JSON mode, so a failure inside the stream (exit 0 with a 401) is an error instead of
+  an empty reply, and omp regains session continuity through `--resume`. Both are marked
+  unverified: only the error shape was seen live.
 
 ## [0.6.0] - 2026-10-27
 

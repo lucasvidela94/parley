@@ -50,7 +50,9 @@ type Spec struct {
 
 	// Output is "text", "json" or "jsonl".
 	Output string `json:"output"`
-	// TextPath is a dotted path inside the object that holds the answer.
+	// TextPath is a dotted path inside the object that holds the answer. A
+	// segment ending in "[]" walks an array and joins what it finds
+	// ("message.content[].text"); the other *_path fields accept it too.
 	TextPath string `json:"text_path,omitempty"`
 	// TextFilterPath/TextFilterEquals keep only lines whose field matches
 	// (jsonl). E.g. type == "text".
@@ -192,19 +194,26 @@ var profiles = map[string]Spec{
 	},
 	"pi": {
 		Bin: "pi",
-		// --mode text is pi's default; its json mode puts the answer in
-		// message.content[] (an array) and reports errors inside the stream
-		// with exit 0, neither of which the adapter can read.
-		Start:        []string{"-p", "--session-id", "{session}"},
-		Continue:     []string{"-p", "--session-id", "{session}"},
-		Prompt:       "arg",
-		Session:      "arg",
-		Output:       "text",
-		ModelArgs:    []string{"--model", "{model}"},
-		ModelsArgs:   []string{"--list-models"},
-		ReadOnlyArgs: []string{"--no-tools"},
-		Verified:     false,
-		Notes:        "flags verified against pi 1.3.0 (--session-id creates the session, --no-tools disables tools); the turn was blocked by an expired provider key, so text output is inferred from exit 1 with the error on stderr",
+		// --mode json streams the whole turn as JSONL. The answer is the text
+		// parts of the assistant message in turn_end, and a failure arrives as
+		// stopReason "error" with errorMessage and exit 0.
+		Start:            []string{"-p", "--mode", "json", "--session-id", "{session}"},
+		Continue:         []string{"-p", "--mode", "json", "--session-id", "{session}"},
+		Prompt:           "arg",
+		Session:          "arg",
+		Output:           "jsonl",
+		TextPath:         "message.content[].text",
+		TextFilterPath:   "type",
+		TextFilterEquals: "turn_end",
+		ErrorPath:        "message.errorMessage",
+		InputUsagePath:   "message.usage.input",
+		OutputUsagePath:  "message.usage.output",
+		CostPath:         "message.usage.cost.total",
+		ModelArgs:        []string{"--model", "{model}"},
+		ModelsArgs:       []string{"--list-models"},
+		ReadOnlyArgs:     []string{"--no-tools"},
+		Verified:         false,
+		Notes:            "flags and the error shape verified against pi 1.3.0 (a 401 arrives as turn_end with stopReason error and exit 0); the success shape (assistant content[] of text parts) comes from pi's docs/message-types.md because every provider on the probing machine was failing, so it has not been seen live",
 	},
 	"hermes": {
 		Bin: "hermes",
@@ -228,17 +237,24 @@ var profiles = map[string]Spec{
 	},
 	"omp": {
 		Bin: "omp",
-		// Like pi, omp's json mode puts the answer in message.content[] (an
-		// array) and only json mode reports the session id, so the spec uses
-		// text mode without continuity; parley sends the history every turn.
-		Start:        []string{"-p"},
-		Prompt:       "arg",
-		Session:      "none",
-		Output:       "text",
-		ModelArgs:    []string{"--model", "{model}"},
-		ReadOnlyArgs: []string{"--no-tools"},
-		Verified:     true,
-		Notes:        "verified against omp 18.13.0: -p prints the answer as text, a failure exits 1 with the error on stderr, --no-tools disables tools; no session continuity",
+		// omp's json mode has pi's shape and is the only mode that reports a
+		// session id (the "id" of the session header); --resume takes it back.
+		Start:            []string{"-p", "--mode", "json"},
+		Continue:         []string{"-p", "--mode", "json", "--resume", "{session}"},
+		Prompt:           "arg",
+		Session:          "output:id",
+		Output:           "jsonl",
+		TextPath:         "message.content[].text",
+		TextFilterPath:   "type",
+		TextFilterEquals: "turn_end",
+		ErrorPath:        "message.errorMessage",
+		InputUsagePath:   "message.usage.input",
+		OutputUsagePath:  "message.usage.output",
+		CostPath:         "message.usage.cost.total",
+		ModelArgs:        []string{"--model", "{model}"},
+		ReadOnlyArgs:     []string{"--no-tools"},
+		Verified:         false,
+		Notes:            "verified against omp 18.13.0 only as far as the session header (its id) and the error shape (turn_end with stopReason error, exit 1) go; the success shape is assumed to match pi's because the provider was returning 429, and --resume with that id was not exercised on a successful turn",
 	},
 }
 
@@ -392,33 +408,57 @@ func (s Spec) sessionFrom(obj map[string]any) string {
 	return strAt(obj, strings.TrimPrefix(s.Session, "output:"))
 }
 
-func at(obj map[string]any, path string) (any, bool) {
+// all returns every value a dotted path reaches. A segment ending in "[]"
+// walks each element of the array under that key, so "message.content[].text"
+// yields the text of every part; a missing key or a non-array drops that branch.
+func all(obj map[string]any, path string) []any {
 	if path == "" {
-		return nil, false
+		return nil
 	}
-	cur := any(obj)
+	cur := []any{obj}
 	for _, key := range strings.Split(path, ".") {
-		m, ok := cur.(map[string]any)
-		if !ok {
-			return nil, false
+		walk, isArray := strings.CutSuffix(key, "[]")
+		var next []any
+		for _, c := range cur {
+			m, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			v, ok := m[walk]
+			if !ok {
+				continue
+			}
+			if !isArray {
+				next = append(next, v)
+				continue
+			}
+			if arr, ok := v.([]any); ok {
+				next = append(next, arr...)
+			}
 		}
-		cur, ok = m[key]
-		if !ok {
-			return nil, false
-		}
+		cur = next
 	}
-	return cur, true
+	return cur
 }
 
+func at(obj map[string]any, path string) (any, bool) {
+	vs := all(obj, path)
+	if len(vs) == 0 {
+		return nil, false
+	}
+	return vs[0], true
+}
+
+// strAt returns the string at path; when the path walks an array it joins the
+// strings of every element, and non-strings are skipped.
 func strAt(obj map[string]any, path string) string {
-	v, ok := at(obj, path)
-	if !ok || v == nil {
-		return ""
+	var b strings.Builder
+	for _, v := range all(obj, path) {
+		if s, ok := v.(string); ok {
+			b.WriteString(s)
+		}
 	}
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return ""
+	return b.String()
 }
 
 // keysAt joins the sorted keys of the object at path; empty when there is none.
@@ -439,13 +479,16 @@ func keysAt(obj map[string]any, path string) string {
 	return strings.Join(keys, ", ")
 }
 
-func boolAt(obj map[string]any, path string) (bool, bool) {
-	v, ok := at(obj, path)
-	if !ok {
-		return false, false
+// boolAt reports whether the path holds a true value; found says whether it
+// held a bool at all. Through an array, any true element wins.
+func boolAt(obj map[string]any, path string) (value, found bool) {
+	for _, v := range all(obj, path) {
+		if b, ok := v.(bool); ok {
+			found = true
+			value = value || b
+		}
 	}
-	b, ok := v.(bool)
-	return b, ok
+	return value, found
 }
 
 func floatAt(obj map[string]any, path string) (float64, bool) {

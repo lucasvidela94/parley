@@ -77,6 +77,13 @@ stream with exit 0. Rather than teach the adapter to walk arrays, the pi spec dr
 mode, where stderr and the exit code carry the failure. Supporting Pi's JSON mode is adapter
 work, not a spec edit.
 
+That adapter work landed (issue #26): a path segment ending in `[]` walks an array, so pi and
+omp read `message.content[].text` from `turn_end` events and treat `message.errorMessage` as a
+failure. Probed 2026-10-27 with every provider on the machine failing (pi: expired key, exit 0;
+omp: 429, exit 1): the error shape is verified live, the success shape comes from pi's
+`docs/message-types.md`. Both specs are therefore `verified: false` until a working provider
+confirms `content[].text` and omp's `--resume <header id>`.
+
 Probed 2026-10-27: hermes 0.21.4 (stream-json, session id in the `result` event, errors in
 `result.error`) and omp 18.13.0. omp's JSON mode has pi's shape (`message.content[]`) and is
 the only mode that reports a session id, so its spec is text mode with no continuity; parley

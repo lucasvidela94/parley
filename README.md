@@ -173,9 +173,9 @@ self-update; `dev` builds refuse unless you pass `--force`.
 | OpenCode | `opencode` | verified |
 | Codex | `codex` | verified |
 | Cursor | `cursor-agent` | verified (the working directory must be trusted: run `cursor-agent` there once, or set the participant's `args` to `["--trust"]`) |
-| Pi | `pi` | spec included; text mode only, turn unverified (expired key) |
+| Pi | `pi` | JSON mode; the error shape is verified, the success shape is from pi's docs (every provider on the probing machine was failing) |
 | Hermes | `hermes` | verified (0.21.4); read-only cannot read files, see below |
-| oh-my-pi | `omp` | verified (18.13.0); text mode, no session continuity |
+| oh-my-pi | `omp` | JSON mode with session continuity (`--resume`); session header and error shape verified on 18.13.0, success shape not seen live |
 
 `parley harnesses` prints this list with the exact flags each spec uses.
 
@@ -337,7 +337,7 @@ first, then resumes the same session and sees the reply that arrived meanwhile (
 counts against the turn's timeout, shows in `read` as a turn in progress, and `parley cancel`
 stops it like any other. The lock is a lease in the store refreshed while the turn runs, so a
 process that dies stops holding it after a few seconds. Harnesses with no session continuity
-(`omp`) are not serialized, and neither are two models of one participant, which have
+(none of the built-ins today) are not serialized, and neither are two models of one participant, which have
 separate sessions. Consequences that remain:
 
 - Two participants that point at the same directory run side by side there; with `write` they
@@ -371,8 +371,9 @@ OpenCode: `--session`). If the session vanished, parley starts a fresh one inste
 - Claude Code cannot be injected into an open TUI; parley continues its session by id.
 - No daemon: there is no push into a sleeping session. If that is ever needed, it is a
   separate layer.
-- The Pi spec is not verified end-to-end: its JSON mode puts the answer in `message.content[]`,
-  an array the adapter cannot read, so its spec uses text mode.
+- The Pi and omp specs are not verified end-to-end: a successful turn was never seen live, only
+  the error shape (the expired key and a 429), so the answer path `message.content[].text` comes
+  from pi's documentation. `parley probe` against a working provider confirms or breaks it.
 - Two participants that point at the same directory run side by side there. See Concurrency.
 - Cancelling cannot recall a request a provider already received, and token counts exist only
   for the harnesses that report them. See Cost and cancelling.

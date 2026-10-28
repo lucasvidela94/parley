@@ -235,6 +235,77 @@ func TestParseFilteredJSONL(t *testing.T) {
 	}
 }
 
+func TestParsePiJSONWalksContentArrays(t *testing.T) {
+	// pi and omp stream the whole turn: system/user messages carry no answer,
+	// and an assistant message's content is an array of typed parts.
+	pi, _ := Known("pi")
+	omp, _ := Known("omp")
+	for _, tc := range []struct {
+		name, raw, text, session string
+		spec                     Spec
+		wantErr                  string
+	}{
+		{
+			name: "pi answer is the text parts of the assistant turn",
+			spec: pi,
+			raw: `{"type":"session","id":"s1"}
+{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"question"}]}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"hmm"},{"type":"text","text":"po"},{"type":"toolCall","name":"read"},{"type":"text","text":"ng"}],"stopReason":"stop"}}`,
+			text: "pong",
+		},
+		{
+			name: "omp reports its session id in the header",
+			spec: omp,
+			raw: `{"type":"session","version":3,"id":"01a18052"}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"pong"}],"stopReason":"stop"}}`,
+			text: "pong", session: "01a18052",
+		},
+		{
+			name: "an error inside the stream is an error even with exit 0",
+			spec: pi,
+			raw: `{"type":"session","id":"s1"}
+{"type":"turn_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"401: api_key_expired"}}`,
+			wantErr: "api_key_expired",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep, err := tc.spec.Parse(tc.raw)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rep.Text != tc.text || rep.SessionID != tc.session {
+				t.Fatalf("%+v", rep)
+			}
+		})
+	}
+}
+
+func TestPathWalksArrays(t *testing.T) {
+	obj := map[string]any{"a": []any{
+		map[string]any{"t": "x", "ok": false},
+		map[string]any{"n": 1},
+		map[string]any{"t": "y", "ok": true},
+	}}
+	if got := strAt(obj, "a[].t"); got != "xy" {
+		t.Fatalf("a[].t = %q, want xy", got)
+	}
+	if b, found := boolAt(obj, "a[].ok"); !found || !b {
+		t.Fatalf("a[].ok = %v,%v, want true when any element is", b, found)
+	}
+	if got := strAt(obj, "a[].missing"); got != "" {
+		t.Fatalf("missing key through an array = %q, want empty", got)
+	}
+	if got := strAt(map[string]any{"a": "scalar"}, "a[].t"); got != "" {
+		t.Fatalf("[] on a non-array = %q, want empty", got)
+	}
+}
+
 func TestCLIStartsCommand(t *testing.T) {
 	// /bin/sh as harness: stdout is the answer, text output mode.
 	spec := Spec{Bin: "sh", Start: []string{"-c", "printf hola"}, Prompt: "stdin", Output: "text"}
