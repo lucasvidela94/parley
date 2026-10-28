@@ -65,7 +65,10 @@ jobs:
       # through GitHub OIDC. The bundle holds the signature, the certificate
       # and the transparency log entry, so verifying needs only cosign.
       - uses: sigstore/cosign-installer@v3
+      # Best effort until a tag has gone through it once: a signing failure
+      # must not block the release, which still ships sha256 checksums.
       - name: sign checksums
+        continue-on-error: true
         run: cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
       # The release notes are this version's section of CHANGELOG.md, so a
       # release cannot go out without them.

@@ -179,7 +179,9 @@ root; shelling out needs `cosign` on the PATH, and a check that silently turns o
 is missing is worse than an honest one. That is the falsifier written in the issue: verification
 needs extra toolchain, so sha256 stays the automatic check and the signature is the high-trust
 path for people who want it. Not exercised end to end until the next tag is pushed: the signing
-step has only been read against cosign's documented flags.
+step has only been read against cosign's documented flags. Until a tag has gone through it, the
+step is `continue-on-error`: a release without a signature is still a release with sha256, and
+a signing failure must not block shipping. Drop the flag after the first signed tag.
 
 ## D19 — The store is local to one machine
 **Decided (issue #31), option (a): local-only is permanent.** Probe: sqlite.org/wal.html, read
@@ -194,3 +196,16 @@ falsifier the issue asked for and a benchmark that happens to pass would not mak
 Cross-machine consulting is a different feature (a relay or a broker), and D1 says parley is a
 channel, not a runtime. Meanwhile `ssh host parley …` or a git worktree on the same host reach
 another checkout without sharing the file.
+
+## D20 — No live delivery into the peer's TUI
+**Decided (issue #25): not now.** An opt-in `delivery: "live"` would push into the session the
+human is watching. Every harness does it differently (Claude's inbox socket, Codex app-server
+`turn/start`, an OpenCode plugin, tmux `send-keys`), each is an internal or plugin interface that
+changes between versions, and each needs setup on the peer's side. That contradicts D2 (the
+bridge owns its sessions, never the human's TUI) and D7 (no daemon), and it adds a probe to
+re-run on every harness release. It could not be probed on the machine of record either: most
+of the installed CLIs cannot complete a turn there (D13).
+
+Reopen with a concrete need, starting from one harness behind `parley probe`, spawn as the
+fallback and the core untouched. The falsifier in the issue still applies: if the probe breaks
+two releases in a row, it goes back here.
