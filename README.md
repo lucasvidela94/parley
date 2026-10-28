@@ -34,6 +34,12 @@ loses the reasoning and the evidence.
 parley gives them one address book. An agent asks another a question inside its own turn and
 gets the answer back — with the other agent's context intact, because sessions persist by id.
 
+Other tools make a different trade. parley (like `agent-mesh`) is **spawn-sync**: no daemon,
+the call starts a turn in a session it owns and returns the reply. `hcom` and `repowire` are
+**live-push**: a daemon delivers into the sessions you already have open, which is a better
+arrival experience and a heavier install. `murmur`-style tools are **room/broker**: a shared bus
+that agents join. See [`docs/prior-art.md`](docs/prior-art.md) for the verified list.
+
 ## Verified
 
 Tested live on 2026-10-25 with `opencode v2.1.4` and `claude 2.1.305`:

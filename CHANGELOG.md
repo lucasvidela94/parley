@@ -10,6 +10,9 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 ### Added
 
 - Project logo (`docs/logo.png`), shown at the top of the README.
+- **Prior art refreshed** (#32). `docs/prior-art.md` adds repowire, hcom and agent-mesh,
+  verified against the GitHub API, and lists the stale ones with the reason; the README says
+  where spawn-sync differs from live-push and room/broker tools.
 - **The store is local to one machine** (#31). Documented as a permanent boundary (D19):
   SQLite's WAL does not work over a network filesystem, so the README says not to put the store
   on sshfs/NFS and points to `ssh host parley …` instead.
