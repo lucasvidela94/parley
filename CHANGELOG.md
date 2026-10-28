@@ -10,6 +10,9 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 ### Added
 
 - Project logo (`docs/logo.png`), shown at the top of the README.
+- **The store is local to one machine** (#31). Documented as a permanent boundary (D19):
+  SQLite's WAL does not work over a network filesystem, so the README says not to put the store
+  on sshfs/NFS and points to `ssh host parley …` instead.
 - **Signed releases** (#28). The release workflow signs `checksums.txt` with Sigstore (keyless,
   GitHub OIDC) and publishes `checksums.txt.sigstore.json`; the release notes show the
   `cosign verify-blob` command. `parley update` still checks sha256 only (D18).

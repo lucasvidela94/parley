@@ -180,3 +180,17 @@ is missing is worse than an honest one. That is the falsifier written in the iss
 needs extra toolchain, so sha256 stays the automatic check and the signature is the high-trust
 path for people who want it. Not exercised end to end until the next tag is pushed: the signing
 step has only been read against cosign's documented flags.
+
+## D19 — The store is local to one machine
+**Decided (issue #31), option (a): local-only is permanent.** Probe: sqlite.org/wal.html, read
+2026-10-27: "All processes using a database must be on the same host computer; WAL does not work
+over a network filesystem. This is because WAL requires all processes to share a small amount of
+memory". The memory is the `-shm` file, so sshfs, NFS or a Tailscale-mounted path would give two
+writers that cannot see each other's locks, which is corruption, not latency. D7 (no daemon, WAL
++ `busy_timeout`) depends on that shared memory and survives only on one host.
+
+Not measured: no two-writer benchmark over sshfs was run, because the vendor's statement is the
+falsifier the issue asked for and a benchmark that happens to pass would not make the setup safe.
+Cross-machine consulting is a different feature (a relay or a broker), and D1 says parley is a
+channel, not a runtime. Meanwhile `ssh host parley …` or a git worktree on the same host reach
+another checkout without sharing the file.

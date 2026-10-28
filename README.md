@@ -371,6 +371,10 @@ OpenCode: `--session`). If the session vanished, parley starts a fresh one inste
 - Claude Code cannot be injected into an open TUI; parley continues its session by id.
 - No daemon: there is no push into a sleeping session. If that is ever needed, it is a
   separate layer.
+- One machine only. The store is a local SQLite file in WAL mode, and SQLite says "WAL does
+  not work over a network filesystem". Do not put `store` (or `$PARLEY_DATA`) on sshfs/NFS. To consult
+  an agent on another machine, run parley there and reach it over `ssh host parley …`, or
+  work in a git worktree on the same host (D19).
 - The Pi and omp specs are not verified end-to-end: a successful turn was never seen live, only
   the error shape (the expired key and a 429), so the answer path `message.content[].text` comes
   from pi's documentation. `parley probe` against a working provider confirms or breaks it.
