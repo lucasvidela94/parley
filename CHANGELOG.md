@@ -5,6 +5,12 @@ and versions follow [Semantic Versioning](https://semver.org/) (before 1.0, a mi
 behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 [lucasvidela94/parley](https://github.com/lucasvidela94/parley/issues).
 
+## [Unreleased]
+
+### Added
+
+- Project logo (`docs/logo.png`), shown at the top of the README.
+
 ## [0.6.0] - 2026-10-27
 
 ### Added

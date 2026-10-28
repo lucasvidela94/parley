@@ -1,3 +1,5 @@
+<img src="docs/logo.png" alt="parley logo" width="240">
+
 # parley
 
 **Talk to other coding agents over one channel.** parley is a single Go binary that lets
