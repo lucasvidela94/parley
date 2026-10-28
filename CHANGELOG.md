@@ -10,6 +10,9 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 ### Added
 
 - Project logo (`docs/logo.png`), shown at the top of the README.
+- **Signed releases** (#28). The release workflow signs `checksums.txt` with Sigstore (keyless,
+  GitHub OIDC) and publishes `checksums.txt.sigstore.json`; the release notes show the
+  `cosign verify-blob` command. `parley update` still checks sha256 only (D18).
 - **Array paths** (#26). A spec path segment ending in `[]` walks an array and joins what it
   finds (`message.content[].text`); `error_bool_path` is true when any element is. Pi and omp
   now run in JSON mode, so a failure inside the stream (exit 0 with a 401) is an error instead of

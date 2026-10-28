@@ -17,7 +17,9 @@ harness involved and a minimal reproduction.
 - **Bounded recursion.** `PARLEY_CHAIN` and `PARLEY_DEPTH` stop A→B→A loops before tokens
   are spent.
 - **Verified updates.** `parley update` downloads from GitHub Releases, checks the sha256
-  from `checksums.txt`, and refuses an archive entry larger than 256 MiB.
+  from `checksums.txt`, and refuses an archive entry larger than 256 MiB. Releases also
+  carry a Sigstore signature of `checksums.txt` (`checksums.txt.sigstore.json`) that you can
+  check with `cosign verify-blob`; `parley update` does not check it itself (D14, D18).
 - **No secrets in config.** Participant config holds harness names, models and paths. API
   keys stay in each harness's own credential store.
 

@@ -52,6 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -60,6 +61,12 @@ jobs:
           merge-multiple: true
       - name: checksums
         run: cd dist && sha256sum *.tar.gz *.zip > checksums.txt
+      # Keyless signature of checksums.txt, tied to this workflow's identity
+      # through GitHub OIDC. The bundle holds the signature, the certificate
+      # and the transparency log entry, so verifying needs only cosign.
+      - uses: sigstore/cosign-installer@v3
+      - name: sign checksums
+        run: cosign sign-blob --yes --bundle dist/checksums.txt.sigstore.json dist/checksums.txt
       # The release notes are this version's section of CHANGELOG.md, so a
       # release cannot go out without them.
       - name: release notes

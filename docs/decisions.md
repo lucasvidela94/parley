@@ -127,8 +127,8 @@ The channel assumes three things, and they are limitations, not bugs:
 - **`PARLEY_CHAIN` and `PARLEY_DEPTH` are cooperative.** They stop accidental recursion. A
   child that rewrites its own environment can bypass them.
 - **`parley update` verifies sha256, not a signature.** `checksums.txt` ships with the release,
-  so compromising the release is enough. If that is not acceptable, install through a package
-  manager or pin a version.
+  so compromising the release is enough. If that is not acceptable, verify the Sigstore
+  signature by hand (D18), install through a package manager or pin a version.
 
 ## D15 — Concurrent turns to one participant are serialized
 **Decided (issue #24).** Sessions are keyed by `(participant, directory)`. Two processes
@@ -165,3 +165,18 @@ report a cost, so a money cap would be enforced for two harnesses and decorative
 and cancels its context, which kills the harness's process group. Polling the store instead of
 signalling a pid works across processes without trusting a pid that may have been reused. It
 cannot recall a request the provider already accepted, and the docs say so.
+
+## D18 — Releases are signed; `update` still checks sha256 only
+**Decided (issue #28).** The release workflow signs `checksums.txt` with cosign, keyless
+through GitHub OIDC, and publishes `checksums.txt.sigstore.json`. The identity is the release
+workflow at a `v*` tag, so a signature proves the checksums came from this repository's CI, not
+from whoever can edit the release page. `release-install.md` shows the `cosign verify-blob`
+command.
+
+`parley update` does not verify it. Doing that in-process needs `sigstore-go` (a large
+dependency tree, against the allowed-dependency list) and a network fetch of the Sigstore trust
+root; shelling out needs `cosign` on the PATH, and a check that silently turns off when cosign
+is missing is worse than an honest one. That is the falsifier written in the issue: verification
+needs extra toolchain, so sha256 stays the automatic check and the signature is the high-trust
+path for people who want it. Not exercised end to end until the next tag is pushed: the signing
+step has only been read against cosign's documented flags.
