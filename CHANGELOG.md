@@ -25,6 +25,12 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   an empty reply, and omp regains session continuity through `--resume`. Both are marked
   unverified: only the error shape was seen live.
 
+### Fixed
+
+- **An empty message no longer blames `--to`** (#42). `parley send --to claude ""` said
+  `missing --to and message`; now it names the field that is actually missing
+  (`empty message (--to claude)`), and `--to` is only reported when it is absent.
+
 ## [0.6.0] - 2026-10-27
 
 ### Added

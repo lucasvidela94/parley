@@ -182,12 +182,12 @@ func (e *Engine) Open(ctx context.Context, topic, contextStr string, maxTurns in
 // Send delivers one message to one participant and waits for the reply. With no
 // conversation id it creates an ephemeral one and closes it right after.
 func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) {
-	msg := strings.TrimSpace(req.Message)
-	if msg == "" {
-		return SendResult{}, errors.New("empty message")
-	}
 	if req.To == "" {
 		return SendResult{}, errors.New("missing recipient")
+	}
+	msg := strings.TrimSpace(req.Message)
+	if msg == "" {
+		return SendResult{}, fmt.Errorf("empty message (to %q)", req.To)
 	}
 	if _, ok := e.cfg.Participants[req.To]; !ok {
 		return SendResult{}, fmt.Errorf("unknown participant %q (available: %s)", req.To, strings.Join(e.names(), ", "))
