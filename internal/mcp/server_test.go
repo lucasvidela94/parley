@@ -202,9 +202,15 @@ func TestModelsToolReportsTheHarnessListing(t *testing.T) {
 	if _, err := s.dispatch(context.Background(), "models", map[string]any{"participant": "ghost"}); err == nil || !strings.Contains(err.Error(), "unknown participant") {
 		t.Fatalf("an unknown participant must be reported: %v", err)
 	}
-	// claude's spec has no models_args: the error must say so, not return an empty list.
-	if _, err := s.dispatch(context.Background(), "models", map[string]any{"participant": "claude"}); err == nil || !strings.Contains(err.Error(), "cannot list its models") {
-		t.Fatalf("a harness that cannot list must say so: %v", err)
+	// claude's spec has no models_args: the answer must still say how to pick one.
+	out, err := s.dispatch(context.Background(), "models", map[string]any{"participant": "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"configured model: none", "harness default", "no listing"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("a harness with no listing must still answer (%q missing):\n%s", want, out)
+		}
 	}
 }
 

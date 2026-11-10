@@ -151,11 +151,15 @@ func (s *Server) send(ctx context.Context, a map[string]any) (string, error) {
 func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (string, error) {
 	switch name {
 	case "participants":
-		parts := s.e.Participants()
+		parts := s.e.Participants(ctx)
 		lines := make([]string, 0, len(parts))
 		for i := range parts {
 			p := parts[i]
-			lines = append(lines, fmt.Sprintf("- %s (%s, %s, %s)", p["name"], p["harness"], defaultStr(p["model"], "harness default"), p["permission"]))
+			model := defaultStr(p["model"], "harness default, not pinned")
+			if p["model"] == "" && p["last_reported"] != "" {
+				model += "; last reported " + p["last_reported"] + " on " + p["last_reported_at"]
+			}
+			lines = append(lines, fmt.Sprintf("- %s (%s, %s, %s)", p["name"], p["harness"], model, p["permission"]))
 		}
 		return "Local identity: " + s.e.Identity() + "\nParticipants:\n" + strings.Join(lines, "\n"), nil
 
@@ -252,8 +256,9 @@ func tools() []any {
 		},
 		map[string]any{
 			"name": "models",
-			"description": "List the models a participant's harness accepts as `model`, exactly as the harness prints them. " +
-				"Not every harness can list its models; the error says so.",
+			"description": "How to pick a `model` for a participant: the configured model (or that the harness default is not pinned), " +
+				"the last model the harness reported, and the harness's own listing when it has one. " +
+				"`model` is opaque and passed through unverified; not every harness can list its models.",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"required":   []string{"participant"},

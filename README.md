@@ -202,7 +202,7 @@ One declarative adapter, no Go required. A harness is a spec:
 | `cost_path` / `input_tokens_path` / `output_tokens_path` | where the turn's cost and token counts are. In JSONL every line that has the field counts and the values add up (OpenCode reports one per step) |
 | `error_hints` | map from a fragment of the CLI's stderr to advice; when a failed command printed that fragment, the advice is appended to the error as `(hint: …)`. Cursor uses it for the workspace-trust failure |
 | `model_keys_path` | JSON output only: dotted path to an object whose keys are the models the turn used (claude's `modelUsage`). Recorded as the message's model when the participant sets none; a configured `model` wins. Cursor, codex and opencode do not report one, so their transcripts stay blank |
-| `models_args` | argv that makes the CLI print its models; `parley models <name>` runs it and shows the output as is (built in for opencode, cursor and pi) |
+| `models_args` | argv that makes the CLI print its models; `parley models <name>` runs it and shows the output as is (built in for opencode, cursor and pi). A spec without it is not an error: `models` reports that the harness has no listing and how to pick an id |
 | `read_only_args` / `write_args` | appended when the turn is read-only / may write |
 | `model_args` | appended when the participant sets `model` (`{model}` is substituted) |
 
@@ -252,7 +252,7 @@ it returns, which is what you need to fill `text_path` and `session`.
 | participant field | meaning |
 |---|---|
 | `harness` | the CLI family: `claude`, `opencode`, `codex`, `cursor`, `pi` |
-| `model` | optional, native to that harness; parley passes it through untouched. Omit it for the harness default |
+| `model` | optional, native to that harness; parley passes it through untouched. Omit it to let the harness decide: `participants` says the default is not pinned and shows the last model that harness reported |
 | `args` | optional extra argv, appended after the spec's flags |
 | `dir` | working directory for this participant's turns (default: where parley runs) |
 | `permission` | `read_only` (default) or `write`. A peer edits only when this is `write` **and** the call passes `--write` / `write=true`; with a `read_only` participant the flag is ignored and the result says so |
@@ -290,14 +290,19 @@ through untouched. To use a model from a provider, make the harness able to reac
 the model:
 
 1. Give the harness the provider's credentials with its own tooling (for OpenCode, `opencode auth`).
-2. `parley models <participant>` prints the ids that harness accepts, exactly as it spells them.
-   OpenCode spells them `provider/model`, for example `opencode-go/kimi-k3`.
+2. `parley models <participant>` answers in three parts: the configured model (or that the
+   harness default is not pinned and parley does not guess it), the last model the harness
+   reported from a turn with no `model` pinned, and the harness's own listing when it has one.
+   The listing is printed exactly as the CLI spells it; OpenCode spells ids `provider/model`,
+   for example `opencode-go/kimi-k3`.
 3. Put one in `model`, or pass it for one call with `--model` / the `model` argument. Leave
    `model` out for the harness default.
 
 A provider that does not appear in `parley models` is not reachable through that harness, and
-parley will not add it. Not every harness can list models; the error says so, and its own
-documentation is the list. This path has been run here only against the providers an OpenCode
+parley will not add it. Not every harness can list models: `models` says so and points at the
+harness's own documentation, instead of failing. The "last reported" model is history, not the
+default: it is what a previous turn with nothing pinned actually ran, and the harness may change
+it on its next update. This path has been run here only against the providers an OpenCode
 install ships with; OpenRouter and Fireworks go the same way if the harness is configured for
 them, but they were not run.
 

@@ -209,3 +209,16 @@ of the installed CLIs cannot complete a turn there (D13).
 Reopen with a concrete need, starting from one harness behind `parley probe`, spawn as the
 fallback and the core untouched. The falsifier in the issue still applies: if the probe breaks
 two releases in a row, it goes back here.
+
+## D21 — The default model is unknown; the transcript records where a model came from
+**Decided (issues #36, #37).** `participants` says a participant with no `model` uses the harness
+default "not pinned", and `models` answers instead of failing when the spec has no listing: the
+configured model, the last model the harness reported, and the harness's own list when it has one.
+
+The store records `model_source` on every message: `configured` (the participant's `model`),
+`override` (a per-call `model`) or `reported` (the turn pinned nothing and the harness named the
+model it ran). Only `reported` can describe a harness default. Before this, `Message.Model` held
+the requested model whenever one was set, so "the last model seen" was the request echoed back,
+not an observation; only Claude reports one (`model_keys_path`), and the store had no way to tell
+the two apart. `participants`/`models` show the reported model as history with its date, never as
+the current default: the harness can change it in an update.
