@@ -156,6 +156,19 @@ the order it first spoke.
   turn is recorded as an error.
 - Ctrl-C or `SIGTERM` on `parley send` (or on the MCP server) kills the harness too.
   `SIGKILL` cannot be caught: a harness started by a killed parley keeps running.
+- **A long turn needs a shell to watch.** `send_message` waits for the reply, and the MCP server
+  answers one call at a time, so an agent cannot poll `read` while its own send is blocked. For a
+  turn that may outlast the client, run it from a shell in the background and poll:
+
+  ```bash
+  parley send --to claude --in cnv_123 --timeout 900 "review this diff" &
+  parley read cnv_123        # a live turn shows "turn in progress: claude, since 15:04:05Z"
+  parley cancel cnv_123      # stop it
+  ```
+
+  A client-side timeout that abandons the call may leave the server's turn running; `read` says
+  whether it is still alive, and the reply lands in the transcript when it finishes. A timeout
+  parley raises kills the harness and records an error.
 - **Cancelling stops the local process, not the provider.** A request the provider already
   received may still finish and be billed. Cost is reported by Claude and OpenCode only, and
   `read` sums it. Tokens are shown per message (`12024 in / 866 out`) for Cursor, Codex and
