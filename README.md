@@ -200,7 +200,8 @@ One declarative adapter, no Go required. A harness is a spec:
 | `text_filter_path` / `text_filter_equals` | for JSONL: which lines count |
 | `error_path` / `error_event_type` / `error_bool_path` | how a failure shows up |
 | `cost_path` / `input_tokens_path` / `output_tokens_path` | where the turn's cost and token counts are. In JSONL every line that has the field counts and the values add up (OpenCode reports one per step) |
-| `error_hints` | map from a fragment of the CLI's stderr to advice; when a failed command printed that fragment, the advice is appended to the error as `(hint: …)`. Cursor uses it for the workspace-trust failure |
+| `error_hints` | map from a fragment of the failure text (stderr or the parsed stdout message) to advice, appended as `(hint: …)`. Cursor uses it for the workspace-trust failure |
+| `error_kinds` | map from a fragment of that same text to a stable kind: `quota`, `auth`, `trust` or `rate_limit`. A classified failure starts `turn failed (quota):` and keeps the raw text, including any reset date. Only fragments seen in real output belong here; anything else stays unclassified |
 | `model_keys_path` | JSON output only: dotted path to an object whose keys are the models the turn used (claude's `modelUsage`). Recorded as the message's model when the participant sets none; a configured `model` wins. Cursor, codex and opencode do not report one, so their transcripts stay blank |
 | `models_args` | argv that makes the CLI print its models; `parley models <name>` runs it and shows the output as is (built in for opencode, cursor and pi). A spec without it is not an error: `models` reports that the harness has no listing and how to pick an id |
 | `read_only_args` / `write_args` | appended when the turn is read-only / may write |
@@ -375,6 +376,10 @@ OpenCode: `--session`). If the session vanished, parley starts a fresh one inste
 5. **Prompt content is untrusted.** History, context and the peer's message reach the
    recipient as data. Read-only limits what it can change, not what it can be told to do —
    see the trust model in [`docs/decisions.md`](docs/decisions.md#d14--trust-model-configuration-is-code).
+6. **A failure says what the harness said.** The harness's own message is included even when it
+   arrives on stdout (Claude's `is_error` JSON) or inside a stream, and the spec's `error_kinds`
+   classify known quota, auth and trust text. A kind is a diagnosis, not a retry decision: the
+   raw text carries the reset date or the fix.
 
 ## Limitations
 

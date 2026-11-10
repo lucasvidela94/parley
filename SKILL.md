@@ -91,6 +91,9 @@ Done when you can name each voice's position, where they differ, and what you de
 ## Guardrails
 
 - **A timeout or an error is not agreement.** Say the other side did not answer.
+- **A classified failure is not a retry.** `turn failed (quota)`, `(auth)` or `(trust)` means
+  the turn did not happen and retrying now spends another turn for nothing; read the raw text
+  for the reset date or the fix. An unclassified failure may be transient.
 - **Read-only by default.** Without `write=true` the recipient runs in its harness's
   read-only mode. Pass `write=true` only when the change is the point, and say so when
   reporting. If `participants` shows `not enforced`, that participant can still edit.

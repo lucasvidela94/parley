@@ -246,6 +246,9 @@ func mergeFlagArgs(base, over harness.Spec) harness.Spec {
 	if over.ErrorHints != nil {
 		base.ErrorHints = over.ErrorHints
 	}
+	if over.ErrorKinds != nil {
+		base.ErrorKinds = over.ErrorKinds
+	}
 	if over.ModelArgs != nil {
 		base.ModelArgs = over.ModelArgs
 	}
