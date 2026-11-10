@@ -48,6 +48,30 @@ func TestInstallSkillFilesReportsSuccess(t *testing.T) {
 	}
 }
 
+func TestSendNamesTheFieldThatIsMissing(t *testing.T) {
+	if err := cmdSend(nil); err == nil || err.Error() != "missing --to" {
+		t.Fatalf("a send with no recipient: %v", err)
+	}
+	// The message is read from stdin when argv carries none; use an empty pipe
+	// so the test cannot block on the terminal.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdin
+	os.Stdin = r
+	defer func() {
+		os.Stdin = old
+		_ = r.Close()
+	}()
+	if err := cmdSend([]string{"--to", "claude"}); err == nil || err.Error() != "empty message (--to claude)" {
+		t.Fatalf("an empty message must name the recipient: %v", err)
+	}
+}
+
 func TestFlagsFirst(t *testing.T) {
 	cases := []struct {
 		args     []string

@@ -167,13 +167,16 @@ func cmdSend(args []string) error {
 		return err
 	}
 
+	if *to == "" {
+		return errors.New("missing --to")
+	}
 	msg := strings.Join(fs.Args(), " ")
 	if msg == "" {
 		raw, _ := io.ReadAll(os.Stdin)
 		msg = string(raw)
 	}
-	if *to == "" || strings.TrimSpace(msg) == "" {
-		return errors.New("missing --to and message")
+	if strings.TrimSpace(msg) == "" {
+		return fmt.Errorf("empty message (--to %s)", *to)
 	}
 	e, err := openEngine()
 	if err != nil {

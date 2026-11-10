@@ -967,6 +967,16 @@ func TestTheParticipantIsFreedWhenATurnFails(t *testing.T) {
 	}
 }
 
+func TestSendNamesTheFieldThatIsMissing(t *testing.T) {
+	env := newTestEngine(t, nil)
+	if _, err := env.e.Send(context.Background(), SendRequest{Message: "hi"}); err == nil || err.Error() != "missing recipient" {
+		t.Fatalf("a send with no recipient: %v", err)
+	}
+	if _, err := env.e.Send(context.Background(), SendRequest{To: "claude"}); err == nil || err.Error() != `empty message (to "claude")` {
+		t.Fatalf("an empty message must name the recipient: %v", err)
+	}
+}
+
 func TestModelsAsksTheHarnessForItsOwnList(t *testing.T) {
 	env := newTestEngine(t, nil)
 	env.e.cfg.Participants["lister"] = config.Participant{Spec: &harness.Spec{Bin: "sh", ModelsArgs: []string{"-c", "printf 'm1\nm2'"}}}
