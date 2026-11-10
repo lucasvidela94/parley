@@ -132,6 +132,7 @@ func (s *Server) send(ctx context.Context, a map[string]any) (string, error) {
 		Write:          boolean(a, "write"),
 		TimeoutS:       integer(a, "timeout_s"),
 		Model:          str(a, "model"),
+		Effort:         str(a, "effort"),
 	})
 	if err != nil {
 		return "", err
@@ -251,6 +252,9 @@ func tools() []any {
 					"timeout_s": map[string]any{"type": "integer"},
 					"model": map[string]any{"type": "string", "description": "Optional: run this call with this model instead of the participant's own. " +
 						"Native to the participant's harness (see the models tool). A model different from the participant's gets its own harness session; the conversation history is still sent."},
+					"effort": map[string]any{"type": "string", "description": "Optional: effort tier for this call, only for a harness that declares one " +
+						"(Claude Code: low, medium, high, xhigh, max). Cursor and OpenCode carry the tier in the model id instead; parley does not compose ids. " +
+						"An effort tier gets its own harness session, like a per-call model."},
 				},
 			},
 		},

@@ -124,6 +124,7 @@ parley close cnv_123 --note "in-memory plus a pending benchmark"
 parley list
 parley models cursor-opus              # what that participant's harness accepts as `model`
 parley send --to cursor --model grok-4.7-high "..."   # this call only, instead of the participant's model
+parley send --to claude-opus --effort medium "..."    # only harnesses with their own effort flag (Claude Code)
 parley participant add reviewer2 --harness claude --model claude-opus-5-5
 parley participant set reviewer2 --model claude-opus-5-5-high
 parley participant rm reviewer2
@@ -209,9 +210,10 @@ One declarative adapter, no Go required. A harness is a spec:
 | `models_args` | argv that makes the CLI print its models; `parley models <name>` runs it and shows the output as is (built in for opencode, cursor and pi). A spec without it is not an error: `models` reports that the harness has no listing and how to pick an id |
 | `read_only_args` / `write_args` | appended when the turn is read-only / may write |
 | `model_args` | appended when the participant sets `model` (`{model}` is substituted) |
+| `effort_args` / `efforts` | appended when a call asks for an effort tier (`{effort}` is substituted), and the values the CLI accepts, so a typo fails before a turn. Only for a CLI with its own flag: Claude Code declares `--effort` with `low`, `medium`, `high`, `xhigh`, `max`. Harnesses that carry the tier in the model id declare neither |
 
 argv is built in this order: `start` or `continue`, the permission flags, the model flags,
-the participant's `args`, and the prompt last when `prompt` is `arg`.
+the effort flags, the participant's `args`, and the prompt last when `prompt` is `arg`.
 
 ```json
 {
@@ -248,7 +250,7 @@ it returns, which is what you need to fill `text_path` and `session`.
     "reviewer": { "harness": "claude", "permission": "read_only" },
     "builder":  { "harness": "opencode", "permission": "write", "dir": "/src/x-worktree" },
     "deepseek": { "harness": "opencode", "model": "deepseek/deepseek-v4.1" },
-    "kimi":     { "harness": "opencode", "model": "opencode-go/kimi-k3", "args": ["--variant", "high"] }
+    "kimi":     { "harness": "opencode", "model": "opencode-go/kimi-k3" }
   }
 }
 ```
@@ -321,6 +323,18 @@ default: it is what a previous turn with nothing pinned actually ran, and the ha
 it on its next update. This path has been run here only against the providers an OpenCode
 install ships with; OpenRouter and Fireworks go the same way if the harness is configured for
 them, but they were not run.
+
+### Effort tiers
+
+`send_message` takes `effort`, and `parley send --effort <tier>` does the same from the shell: one
+call at another effort tier. It is the harness's own flag, not a model id parley composes.
+Claude Code 2.1.322 accepts `low`, `medium`, `high`, `xhigh` and `max`, so
+`parley send --to claude-opus --effort medium "..."` adds `--effort medium`; an unknown value is
+refused before a turn is spent. Other harnesses do not declare one: Cursor's model ids carry the
+tier (`claude-opus-5-5-high`) and OpenCode's variant is part of the model id
+(`provider/model#variant`, per `opencode run --help`), so pass the full id from `parley models`
+instead. A call with an effort gets its own harness session, like a per-call model, because
+resuming may keep the old tier.
 
 ### Read-only, enforced by the harness
 

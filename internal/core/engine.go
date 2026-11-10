@@ -52,6 +52,9 @@ type SendRequest struct {
 	// Model overrides the participant's configured model for this call only.
 	// It is native to the participant's harness and parley never interprets it.
 	Model string
+	// Effort asks for a tier through the harness's own flag. Only a harness
+	// whose spec declares effort_args accepts it; the values come from there.
+	Effort string
 }
 
 type SendResult struct {
@@ -229,7 +232,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	if _, ok := e.cfg.Participants[req.To]; !ok {
 		return SendResult{}, fmt.Errorf("unknown participant %q (available: %s)", req.To, strings.Join(e.names(), ", "))
 	}
-	if err := e.guard(req.To); err != nil {
+	if err := e.preflight(req); err != nil {
 		return SendResult{}, err
 	}
 
@@ -286,7 +289,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		conversation: conv,
 	}
 	rep, err := e.cancellable(ctx, conv.ID, req.To, func(ctx context.Context) (harness.Reply, error) {
-		return e.turn(ctx, turnRequest{name: req.To, model: req.Model, timeout: requestTimeout(req.TimeoutS, e.cfg.DefaultTimeoutS), write: req.Write}, func(dir string, readOnly bool) string {
+		return e.turn(ctx, turnRequest{name: req.To, model: req.Model, effort: req.Effort, timeout: requestTimeout(req.TimeoutS, e.cfg.DefaultTimeoutS), write: req.Write}, func(dir string, readOnly bool) string {
 			in.dir = dir
 			in.readOnly = readOnly
 			// A turn that waited for the participant starts after other replies
@@ -360,6 +363,34 @@ func (e *Engine) modelSource(req SendRequest) string {
 		return "configured"
 	}
 	return ""
+}
+
+// preflight runs the checks that must happen before a conversation is opened, a
+// turn is spent or a question is recorded.
+func (e *Engine) preflight(req SendRequest) error {
+	if err := e.guard(req.To); err != nil {
+		return err
+	}
+	return e.checkEffort(req)
+}
+
+// checkEffort rejects an effort the harness cannot express before a turn is
+// spent. It runs before the conversation is opened or the question recorded.
+func (e *Engine) checkEffort(req SendRequest) error {
+	if req.Effort == "" {
+		return nil
+	}
+	spec, _, err := e.cfg.Spec(req.To)
+	if err != nil {
+		return err
+	}
+	if len(spec.EffortArgs) == 0 {
+		return fmt.Errorf("%s has no effort flag; pass a full model id instead (see `parley models %s`)", req.To, req.To)
+	}
+	if len(spec.Efforts) > 0 && !slices.Contains(spec.Efforts, req.Effort) {
+		return fmt.Errorf("effort %q is not one of %s", req.Effort, strings.Join(spec.Efforts, ", "))
+	}
+	return nil
 }
 
 // writeNotice explains a write=true that the participant's config overrides.
@@ -506,15 +537,27 @@ func (e *Engine) cancellable(ctx context.Context, convID, name string, fn func(c
 type turnRequest struct {
 	name    string
 	model   string
+	effort  string
 	timeout time.Duration
 	write   bool
 }
 
-// modelSep joins a participant and a model override into a session key.
-// Harnesses disagree on resuming a session under another model (claude keeps
-// the old one, codex warns), so each model gets its own session; the history
-// travels in the prompt, so no context is lost.
+// modelSep joins the parts of a session key.
 const modelSep = "\x1f"
+
+// turnSessionKey keys a turn that changes what runs: a model override, an
+// effort tier, or both. Harnesses ignore one or the other when resuming (claude
+// keeps the model of the session), so each combination gets its own session.
+func turnSessionKey(name, model, effort string) string {
+	parts := []string{name}
+	if model != "" || effort != "" {
+		parts = append(parts, model)
+	}
+	if effort != "" {
+		parts = append(parts, effort)
+	}
+	return strings.Join(parts, modelSep)
+}
 
 func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string, readOnly bool) string) (harness.Reply, error) {
 	name, timeout := tr.name, tr.timeout
@@ -530,11 +573,18 @@ func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string
 		h = harness.NewCLI(spec)
 	}
 	readOnly := e.readOnly(name, tr.write)
-	opts := harness.Options{Model: p.Model, Dir: dir, ReadOnly: readOnly, Env: e.childEnv(name), Args: p.Args}
+	opts := harness.Options{Model: p.Model, Effort: tr.effort, Dir: dir, ReadOnly: readOnly, Env: e.childEnv(name), Args: p.Args}
 	sessionKey := name
+	keyModel := ""
 	if tr.model != "" && tr.model != p.Model {
 		opts.Model = tr.model
-		sessionKey = name + modelSep + tr.model
+		keyModel = tr.model
+	}
+	if keyModel != "" || tr.effort != "" {
+		if keyModel == "" {
+			keyModel = p.Model
+		}
+		sessionKey = turnSessionKey(name, keyModel, tr.effort)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)

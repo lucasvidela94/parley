@@ -23,6 +23,13 @@ func TestRender(t *testing.T) {
 				"--model", "opus"},
 		},
 		{
+			name: "claude with an effort tier", harness: "claude",
+			o: Options{SessionID: "uuid-1", Model: "opus", Effort: "medium", ReadOnly: true},
+			want: []string{"-p", "--session-id", "uuid-1", "--output-format", "json",
+				"--permission-mode", "plan", "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit",
+				"--model", "opus", "--effort", "medium"},
+		},
+		{
 			name: "claude with write and no model", harness: "claude",
 			o:    Options{SessionID: "uuid-1"},
 			want: []string{"-p", "--session-id", "uuid-1", "--output-format", "json"},

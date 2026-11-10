@@ -102,7 +102,9 @@ Done when you can name each voice's position, where they differ, and what you de
   For a one-off model, pass `model` to `send_message`; `models(participant)` reports the
   configured model, the last one the harness said it ran, and the harness's own list when it
   has one. A model different from the participant's gets its own harness session, and the
-  history still travels in the prompt.
+  history still travels in the prompt. For an effort tier, pass `effort` only when the harness
+  declares one (Claude Code: low, medium, high, xhigh, max); Cursor and OpenCode carry it in the
+  model id, so use the full id.
 - **Writing needs two switches.** `write=true` on the call and `permission: "write"` for the
   participant in the config; with a `read_only` participant the flag is ignored and the
   result carries a notice.

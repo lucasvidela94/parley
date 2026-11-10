@@ -93,6 +93,8 @@ func TestInlineSpecReplacesHintsAndListingOfTheHarness(t *testing.T) {
 		ErrorHints: map[string]string{"quota": "wait"},
 		ErrorKinds: map[string]string{"quota": "quota"},
 		ModelsArgs: []string{"list"},
+		EffortArgs: []string{"--effort", "{effort}"},
+		Efforts:    []string{"low", "high"},
 	}}
 	c.Participants["plain"] = Participant{Harness: "cursor"}
 	s, _, err := c.Spec("cur")
@@ -101,8 +103,10 @@ func TestInlineSpecReplacesHintsAndListingOfTheHarness(t *testing.T) {
 	}
 	if !reflect.DeepEqual(s.ErrorHints, map[string]string{"quota": "wait"}) ||
 		!reflect.DeepEqual(s.ErrorKinds, map[string]string{"quota": "quota"}) ||
-		!slices.Equal(s.ModelsArgs, []string{"list"}) {
-		t.Fatalf("the participant's own hints and listing must replace the harness's: %+v", s)
+		!slices.Equal(s.ModelsArgs, []string{"list"}) ||
+		!slices.Equal(s.EffortArgs, []string{"--effort", "{effort}"}) ||
+		!slices.Equal(s.Efforts, []string{"low", "high"}) {
+		t.Fatalf("the participant's own hints, listing and effort must replace the harness's: %+v", s)
 	}
 	plain, _, _ := c.Spec("plain")
 	if len(plain.ErrorHints) == 0 || len(plain.ModelsArgs) == 0 {
