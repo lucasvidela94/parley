@@ -5,8 +5,11 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/lucasvidela94/parley/internal/config"
 )
 
 func TestSetupSkillsOnlyRefreshesTheSkill(t *testing.T) {
@@ -89,11 +92,155 @@ func TestFlagsFirst(t *testing.T) {
 		fs := flag.NewFlagSet("close", flag.ContinueOnError)
 		note := fs.String("note", "", "")
 		asJSON := fs.Bool("json", false, "")
-		if err := fs.Parse(flagsFirst(fs, c.args)); err != nil {
+		ordered, err := flagsFirst(fs, c.args)
+		if err != nil {
+			t.Fatalf("%v: %v", c.args, err)
+		}
+		if err := fs.Parse(ordered); err != nil {
 			t.Fatalf("%v: %v", c.args, err)
 		}
 		if *note != c.note || *asJSON != c.asJSON || fs.Arg(0) != c.position {
 			t.Fatalf("%v: note=%q json=%v args=%v", c.args, *note, *asJSON, strings.Join(fs.Args(), ","))
 		}
+	}
+}
+
+func TestFlagsFirstRefusesAValueFlagWithNoValue(t *testing.T) {
+	fs := flag.NewFlagSet("close", flag.ContinueOnError)
+	fs.String("note", "", "")
+	// The "--" sentinel must not become the flag's value.
+	if _, err := flagsFirst(fs, []string{"cnv_1", "--note"}); err == nil || !strings.Contains(err.Error(), "needs an argument") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func participantEnv(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("PARLEY_CONFIG", filepath.Join(home, "config.json"))
+	t.Setenv("PARLEY_DATA", filepath.Join(home, "p.db"))
+	return home
+}
+
+func TestParticipantAdd(t *testing.T) {
+	participantEnv(t)
+	if err := cmdParticipant([]string{"add", "rev", "--harness", "opencode", "--model", "deepseek/x", "--arg", "--variant", "--arg", "high"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := cfg.Participants["rev"]
+	if !ok || p.Harness != "opencode" || p.Model != "deepseek/x" || !slices.Equal(p.Args, []string{"--variant", "high"}) {
+		t.Fatalf("%+v", p)
+	}
+	if err := cmdParticipant([]string{"add", "rev", "--harness", "claude"}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("a duplicate must be refused: %v", err)
+	}
+	if err := cmdParticipant([]string{"add", "bad", "--harness", "nope"}); err == nil || !strings.Contains(err.Error(), "unknown harness") {
+		t.Fatalf("an unknown harness must be refused: %v", err)
+	}
+}
+
+func TestParticipantSet(t *testing.T) {
+	home := participantEnv(t)
+	if err := cmdParticipant([]string{"add", "rev", "--harness", "opencode", "--arg", "--variant"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdParticipant([]string{"set", "rev", "--model", "other/y", "--no-args"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.Participants["rev"]; p.Model != "other/y" || len(p.Args) != 0 {
+		t.Fatalf("%+v", p)
+	}
+
+	specPath := filepath.Join(home, "spec.json")
+	if err := os.WriteFile(specPath, []byte(`{"bin":"sh","start":["-c","echo hi"],"prompt":"arg","output":"text"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdParticipant([]string{"add", "custom", "--harness", "opencode", "--spec", specPath}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec, _, err := cfg.Spec("custom"); err != nil || spec.Bin != "sh" {
+		t.Fatalf("%+v %v", spec, err)
+	}
+	if err := cmdParticipant([]string{"set", "custom", "--no-spec"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec, _, err := cfg.Spec("custom"); err != nil || spec.Bin != "opencode" {
+		t.Fatalf("the inline spec must be gone and the harness kept: %+v %v", spec, err)
+	}
+	if err := cmdParticipant([]string{"set", "rev"}); err == nil || !strings.Contains(err.Error(), "nothing to change") {
+		t.Fatalf("a set with no flag must say so: %v", err)
+	}
+}
+
+func TestParticipantSetKeepsWhatItDoesNotMention(t *testing.T) {
+	participantEnv(t)
+	if err := cmdParticipant([]string{"add", "rev", "--harness", "opencode", "--dir", "/tmp/x", "--permission", "write", "--model", "a/b", "--arg", "--variant"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdParticipant([]string{"set", "rev", "--model", ""}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Participants["rev"]
+	if p.Model != "" || p.Harness != "opencode" || p.Dir != "/tmp/x" || p.Permission != "write" || !slices.Equal(p.Args, []string{"--variant"}) {
+		t.Fatalf("%+v", p)
+	}
+}
+
+func TestParticipantRefusesAFlagWithoutValue(t *testing.T) {
+	participantEnv(t)
+	for _, args := range [][]string{
+		{"add", "rev", "--harness"},
+		{"add", "rev", "--harness", "claude", "--arg"},
+	} {
+		if err := cmdParticipant(args); err == nil || !strings.Contains(err.Error(), "needs an argument") {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Participants) != 0 {
+		t.Fatalf("a refused flag must not write a participant: %+v", cfg.Participants)
+	}
+}
+
+func TestParticipantRemove(t *testing.T) {
+	participantEnv(t)
+	if err := cmdParticipant([]string{"add", "rev", "--harness", "claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmdParticipant([]string{"rm", "rev"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Participants["rev"]; ok {
+		t.Fatal("rm left the participant behind")
+	}
+	if err := cmdParticipant([]string{"rm", "rev"}); err == nil {
+		t.Fatal("removing an unknown participant must fail")
 	}
 }

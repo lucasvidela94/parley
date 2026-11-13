@@ -124,6 +124,9 @@ parley close cnv_123 --note "in-memory plus a pending benchmark"
 parley list
 parley models cursor-opus              # what that participant's harness accepts as `model`
 parley send --to cursor --model grok-4.7-high "..."   # this call only, instead of the participant's model
+parley participant add reviewer2 --harness claude --model claude-opus-5-5
+parley participant set reviewer2 --model claude-opus-5-5-high
+parley participant rm reviewer2
 ```
 
 Without `--in` / `conversation_id` the conversation is ephemeral: created, answered, closed.
@@ -258,6 +261,18 @@ it returns, which is what you need to fill `text_path` and `session`.
 | `dir` | working directory for this participant's turns (default: where parley runs) |
 | `permission` | `read_only` (default) or `write`. A peer edits only when this is `write` **and** the call passes `--write` / `write=true`; with a `read_only` participant the flag is ignored and the result says so |
 | `spec` | an inline spec, merged over the harness spec (see above) |
+
+`parley participant add|set|rm` edits the file for you and validates before writing. `add` refuses
+an existing name, `set` changes only the flags you pass, `rm` removes the entry; `--model ""`
+clears a model, `--no-args` and `--no-spec` clear the rest, and `--spec <file>` reads an inline
+spec from JSON. A name cannot contain a comma (the chain is comma-separated), start or end with a
+space, or contain control characters; names with `/`, `:` or `@` keep working. A binary that is
+not on `PATH` gets a warning, not a refusal: the config may be for another machine.
+
+The file is read strictly on every command: an unknown key, an unknown harness, a bad
+`permission` or a participant with neither `harness` nor `spec` is reported with `file:line:col`,
+instead of being ignored until the first send. A write goes to a temporary file and is renamed
+with mode `0600`, so a crash cannot leave a truncated config behind.
 
 Participants are names, not harnesses: two entries on the same harness with different models
 are two voices, each with its own session, and both can take turns in one conversation.

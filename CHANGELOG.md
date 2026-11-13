@@ -30,6 +30,12 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   and the harness's own list when it has one. `participants` shows the reported model as history
   too. The store records `model_source` (`configured`, `override`, `reported`), so a requested
   model is never presented as an observation (D21).
+- **Participants are edited from the CLI, and the config is validated** (#43).
+  `parley participant add|set|rm` write the file without hand-editing JSON; `set` changes only the
+  flags passed and `--model ""`, `--no-args`, `--no-spec` clear fields. Every command reads the
+  config strictly: an unknown key, harness or permission is reported with `file:line:col` instead
+  of being ignored until the first send. Saves are atomic and `0600`, and a missing binary is a
+  warning rather than a refusal (D23).
 
 ### Fixed
 
