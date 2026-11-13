@@ -5,7 +5,7 @@ and versions follow [Semantic Versioning](https://semver.org/) (before 1.0, a mi
 behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 [lucasvidela94/parley](https://github.com/lucasvidela94/parley/issues).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-13
 
 ### Added
 
@@ -270,6 +270,7 @@ First release.
 - A usage skill for agent-to-agent workflows, installed by `parley setup`.
 - Self-update from GitHub releases with sha256 verification.
 
+[0.7.0]: https://github.com/lucasvidela94/parley/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/lucasvidela94/parley/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/lucasvidela94/parley/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/lucasvidela94/parley/compare/v0.3.2...v0.4.0
