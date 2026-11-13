@@ -1008,6 +1008,67 @@ func TestEffortGetsItsOwnSession(t *testing.T) {
 	}
 }
 
+func TestEffortSessionKeysDoNotCollide(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"a", "b", "c", "d", "e", "f"}})
+	ctx := context.Background()
+	env.e.cfg.Participants["pinned"] = config.Participant{Harness: "claude", Model: "cfg/model"}
+	send := func(model, effort string) {
+		t.Helper()
+		if _, err := env.e.Send(ctx, SendRequest{To: "pinned", Message: "q", Model: model, Effort: effort}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("", "")          // 1: the plain session
+	send("", "high")      // 2: configured model + effort
+	send("other", "")     // 3: model override
+	send("other", "high") // 4: override + effort
+	send("other", "high") // 5: resumes 4, not 1 or 3
+	f := env.fakes["claude"]
+	if f.started != 4 || f.cont != 1 {
+		t.Fatalf("each combination needs its own session: started=%d cont=%d", f.started, f.cont)
+	}
+	if err := env.e.ResetSession(ctx, "pinned", ""); err != nil {
+		t.Fatal(err)
+	}
+	send("other", "high") // 6: the reset cleared the effort-keyed session too
+	if f.started != 5 {
+		t.Fatalf("session reset left the effort key behind: started=%d", f.started)
+	}
+}
+
+func TestEffortRefusedBeforeSpendingATurn(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"ok"}})
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "t", "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: view.Conversation.ID, To: "opencode", Message: "hi", Effort: "high"}); err == nil {
+		t.Fatal("opencode has no effort flag")
+	}
+	back, err := env.e.Read(ctx, view.Conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Conversation.Turns != 0 || len(back.Messages) != 0 {
+		t.Fatalf("a refused effort spent a turn or recorded a question: %+v", back.Conversation)
+	}
+	before, err := env.e.List(ctx, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.e.Send(ctx, SendRequest{To: "opencode", Message: "hi", Effort: "high"}); err == nil {
+		t.Fatal("opencode has no effort flag")
+	}
+	after, err := env.e.List(ctx, "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("a refused effort created an ephemeral conversation: %d -> %d", len(before), len(after))
+	}
+}
+
 func TestModelsAnswersEvenWithoutAListingCommand(t *testing.T) {
 	env := newTestEngine(t, nil)
 	env.e.cfg.Participants["lister"] = config.Participant{Spec: &harness.Spec{Bin: "sh", ModelsArgs: []string{"-c", "printf 'm1\nm2'"}}}
