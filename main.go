@@ -147,8 +147,8 @@ func cmdParticipants() error {
 		return err
 	}
 	defer func() { _ = e.Shutdown() }()
-	for _, p := range e.Participants() {
-		fmt.Printf("%-10s %-12s %-34s %s\n", p["name"], p["harness"], defStr(p["model"], "(harness default model)"), p["permission"])
+	for _, p := range e.Participants(context.Background()) {
+		fmt.Printf("%-10s %-12s %-34s %s\n", p["name"], p["harness"], modelLabel(p), p["permission"])
 	}
 	fmt.Printf("\nlocal identity: %s\nstore: %s\n", e.Identity(), e.Config().StorePath())
 	return nil
@@ -776,9 +776,15 @@ func jsonOut(v any) error {
 	return enc.Encode(v)
 }
 
-func defStr(s, def string) string {
-	if s == "" {
-		return def
+// modelLabel says what the participant will run: the configured model, or an
+// honest "not pinned" plus the last model the harness actually reported.
+func modelLabel(p map[string]string) string {
+	if p["model"] != "" {
+		return p["model"]
 	}
-	return s
+	label := "(harness default, not pinned)"
+	if p["last_reported"] != "" {
+		label += " · last reported " + p["last_reported"] + " (" + p["last_reported_at"] + ")"
+	}
+	return label
 }

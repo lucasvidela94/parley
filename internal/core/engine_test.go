@@ -255,7 +255,7 @@ func TestParticipantsAreSortedAndNameTheirHarness(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{})
 	env.e.cfg.Participants["aaa"] = config.Participant{Spec: &harness.Spec{Bin: "mytool", Start: []string{"run"}}}
 	var names, harnesses []string
-	for _, p := range env.e.Participants() {
+	for _, p := range env.e.Participants(context.Background()) {
 		names = append(names, p["name"])
 		harnesses = append(harnesses, p["harness"])
 	}
@@ -530,7 +530,7 @@ func TestPage(t *testing.T) {
 func TestParticipantsSayWhenReadOnlyIsNotEnforced(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{})
 	env.e.cfg.Participants["custom"] = config.Participant{Spec: &harness.Spec{Bin: "mytool", Start: []string{"run"}}}
-	for _, p := range env.e.Participants() {
+	for _, p := range env.e.Participants(context.Background()) {
 		enforced := !strings.Contains(p["permission"], "not enforced")
 		if want := p["name"] != "custom"; enforced != want {
 			t.Fatalf("%s: permission %q", p["name"], p["permission"])
@@ -564,15 +564,15 @@ func TestReloadPicksUpAnEditedConfig(t *testing.T) {
 	e := New(cfg, st)
 	t.Cleanup(func() { e.Shutdown() })
 
-	if err := e.Reload(); err != nil || len(e.Participants()) != 1 {
-		t.Fatalf("untouched config: %v %v", err, e.Participants())
+	if err := e.Reload(); err != nil || len(e.Participants(context.Background())) != 1 {
+		t.Fatalf("untouched config: %v %v", err, e.Participants(context.Background()))
 	}
 
 	write(`{"participants":{"claude":{"harness":"claude"},"cursor-opus":{"harness":"cursor","model":"claude-opus-5-5-high"}}}`, now.Add(time.Hour))
 	if err := e.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if got := e.Participants(); len(got) != 2 || got[1]["name"] != "cursor-opus" || got[1]["model"] != "claude-opus-5-5-high" {
+	if got := e.Participants(context.Background()); len(got) != 2 || got[1]["name"] != "cursor-opus" || got[1]["model"] != "claude-opus-5-5-high" {
 		t.Fatalf("the edit was not picked up: %v", got)
 	}
 
@@ -580,7 +580,7 @@ func TestReloadPicksUpAnEditedConfig(t *testing.T) {
 	if err := e.Reload(); err == nil {
 		t.Fatal("a broken edit must be reported")
 	}
-	if len(e.Participants()) != 2 {
+	if len(e.Participants(context.Background())) != 2 {
 		t.Fatal("a broken edit must leave the last good config in place")
 	}
 }
@@ -636,7 +636,7 @@ func TestParticipantsSayBothSwitchesAreNeededToWrite(t *testing.T) {
 	env := newTestEngine(t, nil)
 	env.e.cfg.Participants["editor"] = config.Participant{Harness: "claude", Permission: "write"}
 	perm := map[string]string{}
-	for _, p := range env.e.Participants() {
+	for _, p := range env.e.Participants(context.Background()) {
 		perm[p["name"]] = p["permission"]
 	}
 	if !strings.Contains(perm["claude"], `permission: "write"`) {
@@ -977,18 +977,66 @@ func TestSendNamesTheFieldThatIsMissing(t *testing.T) {
 	}
 }
 
-func TestModelsAsksTheHarnessForItsOwnList(t *testing.T) {
+func TestModelsAnswersEvenWithoutAListingCommand(t *testing.T) {
 	env := newTestEngine(t, nil)
 	env.e.cfg.Participants["lister"] = config.Participant{Spec: &harness.Spec{Bin: "sh", ModelsArgs: []string{"-c", "printf 'm1\nm2'"}}}
 	env.e.cfg.Participants["mute"] = config.Participant{Spec: &harness.Spec{Bin: "sh"}}
+	env.e.cfg.Participants["broken"] = config.Participant{Spec: &harness.Spec{Bin: "sh", ModelsArgs: []string{"-c", "echo broken >&2; exit 1"}}}
 	out, err := env.e.Models(context.Background(), "lister")
-	if err != nil || out != "m1\nm2" {
+	if err != nil || !strings.Contains(out, "m1\nm2") {
 		t.Fatalf("%q %v", out, err)
 	}
-	if _, err := env.e.Models(context.Background(), "mute"); err == nil || !strings.Contains(err.Error(), "cannot list") {
-		t.Fatalf("a harness with no listing command must say so: %v", err)
+	out, err = env.e.Models(context.Background(), "mute")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"configured model: none", "last reported by the harness: unknown", "no listing"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("a harness with no listing must still answer (%q missing):\n%s", want, out)
+		}
+	}
+	if _, err := env.e.Models(context.Background(), "broken"); err == nil || !strings.Contains(err.Error(), "broken") {
+		t.Fatalf("a listing command that fails is still an error: %v", err)
 	}
 	if _, err := env.e.Models(context.Background(), "ghost"); err == nil {
 		t.Fatal("unknown participant")
+	}
+}
+
+func TestOnlyAReportedModelCountsAsHistory(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"first", "second", "third"}})
+	env.fakes["claude"].reports = "claude-opus-5-5"
+	ctx := context.Background()
+
+	res, err := env.e.Send(ctx, SendRequest{To: "claude", Message: "no model pinned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := env.e.Read(ctx, res.Conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := view.Messages[1]; m.Model != "claude-opus-5-5" || m.ModelSource != "reported" {
+		t.Fatalf("a turn with no model pinned must record the harness's report: %+v", m)
+	}
+
+	if _, err := env.e.Send(ctx, SendRequest{To: "claude", Message: "one-off", Model: "claude-sonnet-5-5"}); err != nil {
+		t.Fatal(err)
+	}
+	env.e.cfg.Participants["pinned"] = config.Participant{Harness: "claude", Model: "claude-opus-5-5-high"}
+	if _, err := env.e.Send(ctx, SendRequest{To: "pinned", Message: "configured"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range env.e.Participants(context.Background()) {
+		if p["name"] != "claude" {
+			continue
+		}
+		if p["last_reported"] != "claude-opus-5-5" {
+			t.Fatalf("the override and the configured model must not become history: %+v", p)
+		}
+		if p["model"] != "" {
+			t.Fatalf("claude pins no model: %+v", p)
+		}
 	}
 }

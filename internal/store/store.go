@@ -31,8 +31,9 @@ type Message struct {
 	ID             string  `json:"id"`
 	ConversationID string  `json:"conversation_id"`
 	Author         string  `json:"author"`
-	Kind           string  `json:"kind"`            // message | note | error
-	Model          string  `json:"model,omitempty"` // the participant's configured model, when set
+	Kind           string  `json:"kind"`                   // message | note | error
+	Model          string  `json:"model,omitempty"`        // configured, per-call, or reported: see ModelSource
+	ModelSource    string  `json:"model_source,omitempty"` // configured | override | reported | ""
 	Body           string  `json:"body"`
 	CostUSD        float64 `json:"cost_usd,omitempty"`
 	// Tokens exactly as the harness reported them; 0 means it said nothing.
@@ -124,6 +125,7 @@ CREATE TABLE IF NOT EXISTS running_turns (
 		{"conversations", "max_turns", "INTEGER NOT NULL DEFAULT 0"},
 		{"conversations", "turns", "INTEGER NOT NULL DEFAULT 0"},
 		{"messages", "model", "TEXT NOT NULL DEFAULT ''"},
+		{"messages", "model_source", "TEXT NOT NULL DEFAULT ''"},
 		{"messages", "input_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"messages", "output_tokens", "INTEGER NOT NULL DEFAULT 0"},
 	} {
@@ -206,8 +208,8 @@ func (s *Store) AddMessage(ctx context.Context, m Message) error {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO messages(id,conversation_id,author,kind,model,body,cost_usd,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		m.ID, m.ConversationID, m.Author, m.Kind, m.Model, m.Body, m.CostUSD, m.InputTokens, m.OutputTokens, ts(m.CreatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO messages(id,conversation_id,author,kind,model,model_source,body,cost_usd,input_tokens,output_tokens,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.ConversationID, m.Author, m.Kind, m.Model, m.ModelSource, m.Body, m.CostUSD, m.InputTokens, m.OutputTokens, ts(m.CreatedAt))
 	if err == nil {
 		_, _ = s.db.ExecContext(ctx, `UPDATE conversations SET updated_at=? WHERE id=?`, ts(time.Now().UTC()), m.ConversationID)
 	}
@@ -215,7 +217,7 @@ func (s *Store) AddMessage(ctx context.Context, m Message) error {
 }
 
 func (s *Store) Messages(ctx context.Context, conversationID string) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,author,kind,model,body,cost_usd,input_tokens,output_tokens,created_at FROM messages WHERE conversation_id=? ORDER BY created_at, rowid`, conversationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,author,kind,model,model_source,body,cost_usd,input_tokens,output_tokens,created_at FROM messages WHERE conversation_id=? ORDER BY created_at, rowid`, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -224,13 +226,31 @@ func (s *Store) Messages(ctx context.Context, conversationID string) ([]Message,
 	for rows.Next() {
 		var m Message
 		var created string
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Author, &m.Kind, &m.Model, &m.Body, &m.CostUSD, &m.InputTokens, &m.OutputTokens, &created); err != nil {
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Author, &m.Kind, &m.Model, &m.ModelSource, &m.Body, &m.CostUSD, &m.InputTokens, &m.OutputTokens, &created); err != nil {
 			return nil, err
 		}
 		m.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// LastReportedModel is the last model a harness named for a turn that pinned no
+// model. Only model_source "reported" counts: the other sources echo what the
+// caller asked for, not what ran, so they cannot answer "what would run now".
+func (s *Store) LastReportedModel(ctx context.Context, author string) (model string, at time.Time, ok bool, err error) {
+	var created string
+	err = s.db.QueryRowContext(ctx, `SELECT model, created_at FROM messages
+WHERE author=? AND model_source='reported' AND model<>''
+ORDER BY created_at DESC, rowid DESC LIMIT 1`, author).Scan(&model, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, false, nil
+	}
+	if err != nil {
+		return "", time.Time{}, false, err
+	}
+	at, _ = time.Parse(time.RFC3339Nano, created)
+	return model, at, true, nil
 }
 
 func (s *Store) SetStatus(ctx context.Context, id, status string) error {

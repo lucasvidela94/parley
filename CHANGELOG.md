@@ -24,6 +24,12 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   now run in JSON mode, so a failure inside the stream (exit 0 with a 401) is an error instead of
   an empty reply, and omp regains session continuity through `--resume`. Both are marked
   unverified: only the error shape was seen live.
+- **Model truth without guessing** (#36, #37). `models` no longer dead-ends when a harness has no
+  listing command: it reports the configured model (or that the harness default is not pinned and
+  parley does not guess it), the last model the harness reported from a turn with nothing pinned,
+  and the harness's own list when it has one. `participants` shows the reported model as history
+  too. The store records `model_source` (`configured`, `override`, `reported`), so a requested
+  model is never presented as an observation (D21).
 
 ### Fixed
 

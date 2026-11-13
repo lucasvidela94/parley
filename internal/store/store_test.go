@@ -45,6 +45,33 @@ func TestSessions(t *testing.T) {
 	}
 }
 
+func TestLastReportedModelIgnoresWhatWasAskedFor(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	c := Conversation{ID: NewID("cnv"), Topic: "t", Status: "open", CreatedAt: time.Now().UTC()}
+	if err := s.CreateConversation(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, err := s.LastReportedModel(ctx, "claude"); err != nil || ok {
+		t.Fatalf("an empty transcript has no history: %v %v", ok, err)
+	}
+	for _, m := range []Message{
+		{Author: "claude", Kind: "message", Model: "claude-opus-5-5", ModelSource: "configured", Body: "a"},
+		{Author: "claude", Kind: "message", Model: "claude-sonnet-5-5", ModelSource: "override", Body: "b"},
+		{Author: "claude", Kind: "message", Model: "claude-opus-5-5", ModelSource: "reported", Body: "c"},
+		{Author: "claude", Kind: "message", Model: "claude-haiku-5-5", ModelSource: "override", Body: "d"},
+	} {
+		m.ConversationID = c.ID
+		if err := s.AddMessage(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, at, ok, err := s.LastReportedModel(ctx, "claude")
+	if err != nil || !ok || got != "claude-opus-5-5" || at.IsZero() {
+		t.Fatalf("only the reported turn counts, and the later override must not win: %q %v %v %v", got, at, ok, err)
+	}
+}
+
 func TestConversationRoundtrip(t *testing.T) {
 	s := openTemp(t)
 	now := time.Now().UTC()

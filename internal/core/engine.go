@@ -123,17 +123,46 @@ func (e *Engine) Reload() error {
 	return nil
 }
 
-// Models returns what the participant's harness prints when asked for its
-// models, untouched: parley does not interpret model ids.
+// Models answers how to pick a model for a participant: the configured one, the
+// last one the harness reported (history, never a guess at the default), and
+// the harness's own listing when the spec has one. A spec without a listing is
+// not an error.
 func (e *Engine) Models(ctx context.Context, participant string) (string, error) {
-	spec, _, err := e.cfg.Spec(participant)
+	spec, p, err := e.cfg.Spec(participant)
 	if err != nil {
 		return "", err
 	}
-	return harness.ListModels(ctx, spec, e.participantDir(participant))
+	last, at, reported, _ := e.st.LastReportedModel(ctx, participant) // best effort: history, not state
+	h := p.Harness
+	if h == "" {
+		h = "custom"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "participant %s (harness %s)\n", participant, h)
+	if p.Model == "" {
+		b.WriteString("configured model: none; the harness default, which parley does not pin or guess\n")
+	} else {
+		fmt.Fprintf(&b, "configured model: %s\n", p.Model)
+	}
+	if reported {
+		fmt.Fprintf(&b, "last reported by the harness: %s on %s (from a turn with no model pinned)\n", last, at.UTC().Format("2006-01-02"))
+	} else {
+		b.WriteString("last reported by the harness: unknown (none recorded, or this harness does not report it)\n")
+	}
+	b.WriteString("model is opaque: parley passes it through without validation\n")
+	if len(spec.ModelsArgs) == 0 {
+		b.WriteString("no listing: this harness has no models command; its own documentation lists the ids\n")
+		return b.String(), nil
+	}
+	out, err := harness.ListModels(ctx, spec, e.participantDir(participant))
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(&b, "models from `%s %s`:\n%s\n", spec.Bin, strings.Join(spec.ModelsArgs, " "), out)
+	return b.String(), nil
 }
 
-func (e *Engine) Participants() []map[string]string {
+func (e *Engine) Participants(ctx context.Context) []map[string]string {
 	names := make([]string, 0, len(e.cfg.Participants))
 	for n := range e.cfg.Participants {
 		names = append(names, n)
@@ -154,8 +183,16 @@ func (e *Engine) Participants() []map[string]string {
 		if h == "" {
 			h = "custom"
 		}
+		last, at, ok, _ := e.st.LastReportedModel(ctx, n) // display only; never fails the listing
+		lastAt := ""
+		if ok {
+			lastAt = at.UTC().Format("2006-01-02")
+		} else {
+			last = ""
+		}
 		out = append(out, map[string]string{
 			"name": n, "harness": h, "model": p.Model, "permission": perm, "dir": p.Dir,
+			"last_reported": last, "last_reported_at": lastAt,
 		})
 	}
 	return out
@@ -236,6 +273,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		return SendResult{}, fmt.Errorf("record message: %w", err)
 	}
 	model := e.callModel(req)
+	source := e.modelSource(req)
 
 	in := promptInput{
 		identity:     e.identity,
@@ -260,7 +298,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	if err != nil {
 		// Recorded with a fresh context: a cancelled turn still owes the
 		// transcript its error.
-		recordErr := e.st.AddMessage(context.WithoutCancel(ctx), store.Message{ConversationID: conv.ID, Author: req.To, Kind: "error", Model: model, Body: err.Error()})
+		recordErr := e.st.AddMessage(context.WithoutCancel(ctx), store.Message{ConversationID: conv.ID, Author: req.To, Kind: "error", Model: model, ModelSource: source, Body: err.Error()})
 		if ephemeral {
 			recordErr = errors.Join(recordErr, e.st.SetStatus(context.WithoutCancel(ctx), conv.ID, "closed"))
 		}
@@ -271,10 +309,8 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	}
 	// A configured model is what the user asked for and wins; otherwise record
 	// the one the harness says it ran, so the transcript says who spoke.
-	if model == "" {
-		model = rep.Model
-	}
-	reply := store.Message{ConversationID: conv.ID, Author: req.To, Kind: "message", Model: model, Body: rep.Text, CostUSD: rep.CostUSD, InputTokens: rep.InputTokens, OutputTokens: rep.OutputTokens}
+	model, source = recordedModel(model, source, rep)
+	reply := store.Message{ConversationID: conv.ID, Author: req.To, Kind: "message", Model: model, ModelSource: source, Body: rep.Text, CostUSD: rep.CostUSD, InputTokens: rep.InputTokens, OutputTokens: rep.OutputTokens}
 	// The answer is paid for: a signal that lands after it arrives must not
 	// keep it out of the transcript.
 	ctx = context.WithoutCancel(ctx)
@@ -297,6 +333,33 @@ func (e *Engine) callModel(req SendRequest) string {
 		return req.Model
 	}
 	return e.cfg.Participants[req.To].Model
+}
+
+// recordedModel is what the transcript stores for a finished turn. A requested
+// model wins over the report; "reported" is only for a turn that pinned nothing
+// and where the harness named what it ran.
+func recordedModel(requested, source string, rep harness.Reply) (string, string) {
+	if requested != "" {
+		return requested, source
+	}
+	if rep.Model != "" {
+		return rep.Model, "reported"
+	}
+	return "", ""
+}
+
+// modelSource says where the model column came from: a per-call override, the
+// participant's configuration, or empty when the call pinned nothing. The
+// store only trusts "reported" (set after a turn where nothing was pinned and
+// the harness named the model) to describe a harness default.
+func (e *Engine) modelSource(req SendRequest) string {
+	if req.Model != "" {
+		return "override"
+	}
+	if e.cfg.Participants[req.To].Model != "" {
+		return "configured"
+	}
+	return ""
 }
 
 // writeNotice explains a write=true that the participant's config overrides.

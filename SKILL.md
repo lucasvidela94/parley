@@ -96,9 +96,10 @@ Done when you can name each voice's position, where they differ, and what you de
   reporting. If `participants` shows `not enforced`, that participant can still edit.
 - **A third voice is a participant.** Two participants on the same harness with different
   `model`s are two voices in one conversation; never run one out of band and paste its reply.
-  For a one-off model, pass `model` to `send_message`; `models(participant)` lists what the
-  harness accepts. A model different from the participant's gets its own harness session,
-  and the history still travels in the prompt.
+  For a one-off model, pass `model` to `send_message`; `models(participant)` reports the
+  configured model, the last one the harness said it ran, and the harness's own list when it
+  has one. A model different from the participant's gets its own harness session, and the
+  history still travels in the prompt.
 - **Writing needs two switches.** `write=true` on the call and `permission: "write"` for the
   participant in the config; with a `read_only` participant the flag is ignored and the
   result carries a notice.
