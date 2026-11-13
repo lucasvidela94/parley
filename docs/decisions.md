@@ -222,3 +222,20 @@ the requested model whenever one was set, so "the last model seen" was the reque
 not an observation; only Claude reports one (`model_keys_path`), and the store had no way to tell
 the two apart. `participants`/`models` show the reported model as history with its date, never as
 the current default: the harness can change it in an update.
+
+## D22 — A failure carries the harness's text and a kind, not a retry decision
+**Decided (issue #38).** A failed turn includes what the harness said, read from stderr and from
+stdout (parsed for json/jsonl) on a non-zero exit or a parse failure. Before this the adapter
+discarded stdout on a non-zero exit, so Claude's account failure — exit 1, empty stderr, the
+reason in an `is_error` JSON object — was recorded as `claude: exit status 1:` five times. Pi
+reports a 401 inside the stream with exit 0, and codex uses a `turn.failed` event, so the parse
+path reads the same text.
+
+`error_kinds` is spec data: a fragment seen in real output maps to `quota`, `auth`, `trust` or
+`rate_limit`, and the error starts `turn failed (<kind>):` with the raw text after it. No
+`reset_at`: the reset is English prose ("your monthly cycle ends on 11/7/2026"), a static map
+cannot parse it, and the raw text keeps it. No `retryable` boolean either: quota is not
+retryable until the reset, auth and trust need a fix, and an unclassified failure must not be
+guessed; the skill derives the policy from the kind. A provider's wording only enters the binary
+through the harness spec that was actually seen emitting it, which is why opencode, which
+re-emits other providers' prose, declares none.

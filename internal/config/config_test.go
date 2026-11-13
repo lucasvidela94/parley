@@ -90,6 +90,7 @@ func TestInlineSpecReplacesHintsAndListingOfTheHarness(t *testing.T) {
 	c := Default()
 	c.Participants["cur"] = Participant{Harness: "cursor", Spec: &harness.Spec{
 		ErrorHints: map[string]string{"quota": "wait"},
+		ErrorKinds: map[string]string{"quota": "quota"},
 		ModelsArgs: []string{"list"},
 	}}
 	c.Participants["plain"] = Participant{Harness: "cursor"}
@@ -97,7 +98,9 @@ func TestInlineSpecReplacesHintsAndListingOfTheHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(s.ErrorHints, map[string]string{"quota": "wait"}) || !slices.Equal(s.ModelsArgs, []string{"list"}) {
+	if !reflect.DeepEqual(s.ErrorHints, map[string]string{"quota": "wait"}) ||
+		!reflect.DeepEqual(s.ErrorKinds, map[string]string{"quota": "quota"}) ||
+		!slices.Equal(s.ModelsArgs, []string{"list"}) {
 		t.Fatalf("the participant's own hints and listing must replace the harness's: %+v", s)
 	}
 	plain, _, _ := c.Spec("plain")

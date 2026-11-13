@@ -69,9 +69,13 @@ type Spec struct {
 	CostPath        string `json:"cost_path,omitempty"`
 	InputUsagePath  string `json:"input_tokens_path,omitempty"`
 	OutputUsagePath string `json:"output_tokens_path,omitempty"`
-	// ErrorHints maps a fragment of the CLI's stderr to advice appended to the
-	// error when the command fails with it.
+	// ErrorHints maps a fragment of the CLI's failure text to advice appended to
+	// the error when the command fails with it.
 	ErrorHints map[string]string `json:"error_hints,omitempty"`
+	// ErrorKinds maps a fragment of that same text to a stable kind the caller
+	// can act on: quota, auth, trust or rate_limit. Only fragments seen in real
+	// output belong here; an unclassified failure stays unclassified.
+	ErrorKinds map[string]string `json:"error_kinds,omitempty"`
 	// ModelKeysPath is a dotted path to an object whose keys are the model ids
 	// the turn used (claude's modelUsage). json output only.
 	ModelKeysPath string `json:"model_keys_path,omitempty"`
@@ -125,8 +129,14 @@ var profiles = map[string]Spec{
 		ModelKeysPath: "modelUsage",
 		ModelArgs:     []string{"--model", "{model}"},
 		ReadOnlyArgs:  []string{"--permission-mode", "plan", "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit"},
-		Verified:      true,
-		Notes:         "session id must be a UUID; parley mints one",
+		ErrorKinds: map[string]string{
+			"usage limit":                        "quota",
+			"credit balance":                     "quota",
+			"payment is past due":                "auth",
+			"oauth_not_allowed_for_organization": "auth",
+		},
+		Verified: true,
+		Notes:    "session id must be a UUID; parley mints one",
 	},
 	"opencode": {
 		Bin: "opencode",
@@ -185,6 +195,10 @@ var profiles = map[string]Spec{
 		OutputUsagePath: "usage.outputTokens",
 		ErrorHints: map[string]string{
 			"Workspace Trust Required": `run cursor-agent once in that directory and accept the prompt, or add "args": ["--trust"] to the participant`,
+		},
+		ErrorKinds: map[string]string{
+			"Workspace Trust Required": "trust",
+			"usage limit":              "quota",
 		},
 		ModelArgs:    []string{"--model", "{model}"},
 		ModelsArgs:   []string{"--list-models"},

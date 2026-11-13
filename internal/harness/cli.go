@@ -66,11 +66,11 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 		return Reply{}, cerr
 	}
 	if err != nil {
-		return Reply{}, fmt.Errorf("%s: %w: %s%s", c.spec.Bin, err, tail(stderr.String(), 1200), c.spec.hint(stderr.String()))
+		return Reply{}, c.spec.failure(err, stdout.String(), stderr.String())
 	}
 	rep, err := c.spec.Parse(stdout.String())
 	if err != nil {
-		return rep, fmt.Errorf("%s: %w", c.spec.Bin, err)
+		return rep, c.spec.failure(err, stdout.String(), stderr.String())
 	}
 	if rep.SessionID == "" && c.spec.Session == "arg" {
 		rep.SessionID = o.SessionID
@@ -78,16 +78,16 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 	return rep, nil
 }
 
-// hint is the spec's advice for a failure whose stderr it recognises, ready to
+// hint is the spec's advice for a failure whose text it recognises, ready to
 // append to the error. The first match in key order wins, so it is stable.
-func (s Spec) hint(stderr string) string {
+func (s Spec) hint(text string) string {
 	keys := make([]string, 0, len(s.ErrorHints))
 	for k := range s.ErrorHints {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		if strings.Contains(stderr, k) {
+		if strings.Contains(text, k) {
 			return " (hint: " + s.ErrorHints[k] + ")"
 		}
 	}

@@ -36,6 +36,14 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 - **An empty message no longer blames `--to`** (#42). `parley send --to claude ""` said
   `missing --to and message`; now it names the field that is actually missing
   (`empty message (--to claude)`), and `--to` is only reported when it is absent.
+- **A failed turn shows what the harness said, and how to read it** (#38). The adapter discarded
+  stdout whenever the exit code was non-zero, so Claude's account failure — exit 1, empty stderr,
+  the reason in an `is_error` JSON object — arrived as `claude: exit status 1:` and was retried
+  blindly. The reason now comes from either stream, inside the stream (pi, exit 0) and from
+  `turn.failed` (codex) included. New spec field `error_kinds` maps text seen in real output to
+  `quota`, `auth`, `trust` or `rate_limit`; a classified failure starts `turn failed (quota):`
+  and keeps the raw text, reset date included. No date parsing and no "retryable" guess: the
+  kind is a diagnosis, not a decision (D22).
 
 ## [0.6.0] - 2026-10-27
 
