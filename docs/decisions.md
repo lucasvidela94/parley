@@ -239,3 +239,18 @@ retryable until the reset, auth and trust need a fix, and an unclassified failur
 guessed; the skill derives the policy from the kind. A provider's wording only enters the binary
 through the harness spec that was actually seen emitting it, which is why opencode, which
 re-emits other providers' prose, declares none.
+
+## D23 — The config is edited through validated commands and read strictly
+**Decided (issue #43).** `parley participant add|set|rm` are the supported edit path, and every
+command reads the file strictly: an unknown key, an unknown harness, a permission other than
+`read_only`/`write`, a name the comma-separated chain cannot carry, or a participant with neither
+`harness` nor `spec` is an error with `file:line:col`. `Save` writes a temporary file in the same
+directory, syncs it, and renames it with mode `0600`.
+
+Reason: `json.Unmarshal` silently dropped an unknown key, and `merge` copies field by field, so a
+typo like `"text_paht"` left the harness default in place and the send failed later, far from the
+file. Hand editing was the only path and it had no undo or validation. The cost is forward
+compatibility: a config written by a newer parley may name a field an older binary rejects; the
+fix is to run the binary that wrote it, which is the same rule as the store. `participant` is
+singular so the list command and the participant names cannot collide with a subcommand.
+

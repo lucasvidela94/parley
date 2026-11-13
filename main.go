@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -54,6 +55,8 @@ func run(args []string) error {
 		return cmdMCP()
 	case "participants":
 		return cmdParticipants()
+	case "participant":
+		return cmdParticipant(args[1:])
 	case "send":
 		return cmdSend(args[1:])
 	case "open":
@@ -102,6 +105,9 @@ func usage() {
   parley cancel <id>         # stop the turns running in a conversation
   parley list [--limit 20]
   parley participants
+  parley participant add <name> --harness <h> [--model <id>] [--arg <flag>]... [--dir <path>] [--permission read_only|write] [--spec <file>]
+  parley participant set <name> [same flags] [--no-args] [--no-spec]
+  parley participant rm  <name>
   parley session reset <name>
   parley models <name>       # the models that participant's harness accepts (for "model")
   parley update [--check] [--force]
@@ -152,6 +158,237 @@ func cmdParticipants() error {
 	}
 	fmt.Printf("\nlocal identity: %s\nstore: %s\n", e.Identity(), e.Config().StorePath())
 	return nil
+}
+
+// participantOpts are the flags shared by `participant add` and `set`.
+type participantOpts struct {
+	harness, model, dir, permission, spec string
+	args                                  []string
+	noArgs, noSpec                        bool
+}
+
+func participantFlags(fs *flag.FlagSet, o *participantOpts) {
+	fs.StringVar(&o.harness, "harness", "", "harness family: claude, opencode, codex, cursor, pi, hermes, omp")
+	fs.StringVar(&o.model, "model", "", "model id native to the harness (empty clears it on `set`)")
+	fs.StringVar(&o.dir, "dir", "", "working directory for this participant's turns (default: the caller's)")
+	fs.StringVar(&o.permission, "permission", "", `read_only (default) or write`)
+	fs.StringVar(&o.spec, "spec", "", "read an inline spec from this JSON file")
+	fs.Func("arg", "extra argv for the participant (repeatable; on `set`, what is given replaces the list)", func(v string) error {
+		o.args = append(o.args, v)
+		return nil
+	})
+	fs.BoolVar(&o.noArgs, "no-args", false, "on `set`, clear the extra argv")
+	fs.BoolVar(&o.noSpec, "no-spec", false, "on `set`, clear the inline spec")
+}
+
+func cmdParticipant(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: parley participant add|set|rm <name> [flags]")
+	}
+	switch args[0] {
+	case "add":
+		return cmdParticipantAdd(args[1:])
+	case "set":
+		return cmdParticipantSet(args[1:])
+	case "rm", "remove":
+		return cmdParticipantRm(args[1:])
+	default:
+		return fmt.Errorf("unknown participant command: %s (try add, set or rm)", args[0])
+	}
+}
+
+func cmdParticipantAdd(args []string) error {
+	fs := flag.NewFlagSet("participant add", flag.ContinueOnError)
+	var o participantOpts
+	participantFlags(fs, &o)
+	if err := parseFlagsFirst(fs, args); err != nil {
+		return err
+	}
+	name, err := participantArg(fs)
+	if err != nil {
+		return err
+	}
+	if o.noArgs || o.noSpec {
+		return errors.New("--no-args and --no-spec only apply to `participant set`")
+	}
+	if o.harness == "" && o.spec == "" {
+		return errors.New("add needs --harness or --spec")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if _, exists := cfg.Participants[name]; exists {
+		return fmt.Errorf("participant %q already exists; use `parley participant set %s ...`", name, name)
+	}
+	p, err := buildParticipant(o)
+	if err != nil {
+		return err
+	}
+	cfg.Participants[name] = p
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	warnMissingBin(cfg, name)
+	return cmdParticipants()
+}
+
+func cmdParticipantSet(args []string) error {
+	fs := flag.NewFlagSet("participant set", flag.ContinueOnError)
+	var o participantOpts
+	participantFlags(fs, &o)
+	if err := parseFlagsFirst(fs, args); err != nil {
+		return err
+	}
+	name, err := participantArg(fs)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	p, exists := cfg.Participants[name]
+	if !exists {
+		return fmt.Errorf("unknown participant %q", name)
+	}
+	seen := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
+	if o.noArgs && seen["arg"] {
+		return errors.New("use --arg or --no-args, not both")
+	}
+	if o.noSpec && seen["spec"] {
+		return errors.New("use --spec or --no-spec, not both")
+	}
+	changed, err := applyParticipantFlags(&p, o, seen)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return errors.New("nothing to change; pass at least one flag")
+	}
+	if seen["harness"] && p.Spec != nil {
+		fmt.Fprintln(os.Stderr, "parley: warning: the inline spec stays and overrides the harness; pass --no-spec to drop it")
+	}
+	cfg.Participants[name] = p
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	warnMissingBin(cfg, name)
+	return cmdParticipants()
+}
+
+func cmdParticipantRm(args []string) error {
+	fs := flag.NewFlagSet("participant rm", flag.ContinueOnError)
+	if err := parseFlagsFirst(fs, args); err != nil {
+		return err
+	}
+	name, err := participantArg(fs)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if _, ok := cfg.Participants[name]; !ok {
+		return fmt.Errorf("unknown participant %q", name)
+	}
+	delete(cfg.Participants, name)
+	if err := cfg.Save(); err != nil {
+		return err
+	}
+	return cmdParticipants()
+}
+
+// applyParticipantFlags changes only the fields whose flag was passed, so
+// `set` cannot silently reset the rest. Empty model, dir or permission are
+// values too: they clear the field.
+func applyParticipantFlags(p *config.Participant, o participantOpts, seen map[string]bool) (bool, error) {
+	changed := false
+	if seen["harness"] {
+		if o.harness == "" {
+			return false, errors.New("--harness cannot be empty")
+		}
+		p.Harness, changed = o.harness, true
+	}
+	if seen["model"] {
+		p.Model, changed = o.model, true
+	}
+	if seen["dir"] {
+		p.Dir, changed = o.dir, true
+	}
+	if seen["permission"] {
+		p.Permission, changed = o.permission, true
+	}
+	if seen["arg"] {
+		p.Args, changed = o.args, true
+	}
+	if o.noArgs {
+		p.Args, changed = nil, true
+	}
+	if seen["spec"] {
+		if o.spec == "" {
+			return false, errors.New("--spec needs a file; use --no-spec to clear it")
+		}
+		s, err := readSpec(o.spec)
+		if err != nil {
+			return false, err
+		}
+		p.Spec, changed = s, true
+	}
+	if o.noSpec {
+		p.Spec, changed = nil, true
+	}
+	return changed, nil
+}
+
+func participantArg(fs *flag.FlagSet) (string, error) {
+	if fs.NArg() != 1 {
+		return "", errors.New("usage: parley participant add|set|rm <name> [flags]")
+	}
+	return fs.Arg(0), nil
+}
+
+func buildParticipant(o participantOpts) (config.Participant, error) {
+	p := config.Participant{Harness: o.harness, Model: o.model, Dir: o.dir, Permission: o.permission, Args: o.args}
+	if o.spec != "" {
+		s, err := readSpec(o.spec)
+		if err != nil {
+			return p, err
+		}
+		p.Spec = s
+	}
+	return p, nil
+}
+
+func readSpec(path string) (*harness.Spec, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var s harness.Spec
+	if err := dec.Decode(&s); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if s.Bin == "" {
+		return nil, fmt.Errorf("%s: the spec has no \"bin\"", path)
+	}
+	return &s, nil
+}
+
+// warnMissingBin tells the user the turn will fail, without refusing to write a
+// config that may be used on another machine where the binary exists.
+func warnMissingBin(cfg config.Config, name string) {
+	spec, _, err := cfg.Spec(name)
+	if err != nil {
+		return
+	}
+	if _, err := exec.LookPath(spec.Bin); err != nil {
+		fmt.Fprintf(os.Stderr, "parley: warning: %s is not on PATH; turns will fail until it is\n", spec.Bin)
+	}
 }
 
 func cmdSend(args []string) error {
@@ -239,7 +476,7 @@ func cmdRead(args []string) error {
 	limit := fs.Int("limit", 0, "show at most this many messages")
 	tail := fs.Int("tail", 0, "show only the last N messages")
 	asJSON := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(flagsFirst(fs, args)); err != nil {
+	if err := parseFlagsFirst(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
@@ -268,7 +505,7 @@ func cmdClose(args []string) error {
 	fs := flag.NewFlagSet("close", flag.ContinueOnError)
 	note := fs.String("note", "", "closing note")
 	asJSON := fs.Bool("json", false, "JSON output")
-	if err := fs.Parse(flagsFirst(fs, args)); err != nil {
+	if err := parseFlagsFirst(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() < 1 {
@@ -736,10 +973,19 @@ func signalContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 }
 
+// parseFlagsFirst reorders flags before positionals, then parses them.
+func parseFlagsFirst(fs *flag.FlagSet, args []string) error {
+	ordered, err := flagsFirst(fs, args)
+	if err != nil {
+		return err
+	}
+	return fs.Parse(ordered)
+}
+
 // flagsFirst moves flags ahead of the positional arguments, so
 // `parley close <id> --note x` parses the note instead of silently dropping it:
 // the flag package stops at the first positional.
-func flagsFirst(fs *flag.FlagSet, args []string) []string {
+func flagsFirst(fs *flag.FlagSet, args []string) ([]string, error) {
 	var flags, rest []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
@@ -760,13 +1006,19 @@ func flagsFirst(fs *flag.FlagSet, args []string) []string {
 		if f == nil {
 			continue // unknown: Parse reports it
 		}
-		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); (!ok || !b.IsBoolFlag()) && i+1 < len(args) {
-			i++
-			flags = append(flags, args[i])
+		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
+			continue
 		}
+		rest := args[i+1:]
+		if len(rest) == 0 {
+			// Do not let the "--" sentinel become this flag's value.
+			return nil, fmt.Errorf("flag needs an argument: %s", a)
+		}
+		flags = append(flags, rest[0])
+		i++
 	}
 	// "--" keeps a positional that starts with "-" from being read as a flag.
-	return append(append(flags, "--"), rest...)
+	return append(append(flags, "--"), rest...), nil
 }
 
 func jsonOut(v any) error {

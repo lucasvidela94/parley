@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,6 +147,129 @@ func TestReadOnlyDefault(t *testing.T) {
 	}
 	if (Participant{Permission: "write"}).ReadOnly() {
 		t.Fatal("write must enable writes")
+	}
+}
+
+func TestLoadRejectsAnUnknownKeyWithItsLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PARLEY_CONFIG", path)
+	raw := `{
+  "participants": {
+    "claude": {"harness": "claude", "modle": "x"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), `unknown field "modle"`) || !strings.Contains(err.Error(), ":3:") {
+		t.Fatalf("a typo must name the line: %v", err)
+	}
+}
+
+func TestLoadRejectsWhatWouldFailLater(t *testing.T) {
+	cases := []struct{ name, body, want string }{
+		{"bad permission", `{"participants":{"a":{"harness":"claude","permission":"rw"}}}`, "permission must be"},
+		{"bad name", `{"participants":{"a,b":{"harness":"claude"}}}`, "cannot be empty"},
+		{"self", `{"participants":{"self":{"harness":"claude"}}}`, "local identity"},
+		{"unknown harness", `{"participants":{"a":{"harness":"nope"}}}`, "unknown harness"},
+		{"nothing", `{"participants":{"a":{}}}`, "set a harness or an inline spec"},
+		{"spec without bin", `{"participants":{"a":{"spec":{"start":["go"]}}}}`, `needs a "bin"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			t.Setenv("PARLEY_CONFIG", path)
+			if err := os.WriteFile(path, []byte(c.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsTrailingData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PARLEY_CONFIG", path)
+	raw := "{\"participants\":{\"a\":{\"harness\":\"claude\"}}}\n{\"participants\":{}}\n"
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "unexpected data") {
+		t.Fatalf("a second value must not be ignored: %v", err)
+	}
+}
+
+func TestLoadLocatesAnUnknownKeyInsideNestedObjects(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PARLEY_CONFIG", path)
+	raw := `{
+  "participants": {
+    "a": {
+      "harness": "claude",
+      "args": ["bogus"],
+      "bogus": 1
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The array value "bogus" must not be mistaken for the key on line 6.
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), `unknown field "bogus"`) || !strings.Contains(err.Error(), ":6:") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSaveKeepsASymlinkedConfig(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "real.json")
+	link := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(target, []byte(`{"participants":{"a":{"harness":"claude"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Skip("symlinks are unavailable:", err)
+	}
+	t.Setenv("PARLEY_CONFIG", link)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Participants["b"] = Participant{Harness: "opencode"}
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Lstat(link)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the symlink must survive: %v %v", fi, err)
+	}
+	c, err = Load()
+	if err != nil || len(c.Participants) != 2 {
+		t.Fatalf("%+v %v", c.Participants, err)
+	}
+}
+
+func TestSaveReplacesTheFilePrivately(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PARLEY_CONFIG", path)
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Participants["claude"] = Participant{Harness: "claude"}
+	if err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("the config must stay private: %v %v", fi, err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("a temporary file was left behind: %+v %v", entries, err)
 	}
 }
 

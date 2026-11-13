@@ -1,12 +1,17 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/lucasvidela94/parley/internal/harness"
 )
@@ -99,16 +104,153 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	var cfg Config
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		return Config{}, fmt.Errorf("%s: %w", path, err)
+	cfg, err := decode(raw)
+	if err != nil {
+		return Config{}, fmt.Errorf("%s:%w", path, err)
 	}
 	cfg.path = path
 	if fi, err := os.Stat(path); err == nil {
 		cfg.mtime = fi.ModTime()
 	}
 	cfg.normalize()
+	if err := cfg.validate(); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
 	return cfg, nil
+}
+
+// decode reads the file strictly: an unknown key is a typo, and dropping it
+// silently used to leave a participant running with a default it never asked
+// for. The error carries a line and column, so the file can be fixed in place.
+func decode(raw []byte) (Config, error) {
+	var cfg Config
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return Config{}, locatedError(raw, dec, err)
+	}
+	// Decode reads one value and stops; a second one would be ignored, which is
+	// how a manual edit leaves half a config in place.
+	if _, err := dec.Token(); err != io.EOF {
+		if err == nil {
+			line, col := lineCol(raw, dec.InputOffset())
+			return Config{}, fmt.Errorf("%d:%d: unexpected data after the config object", line, col)
+		}
+		return Config{}, locatedError(raw, dec, err)
+	}
+	return cfg, nil
+}
+
+// locatedError adds the line and column the stdlib leaves out for an unknown
+// field, and passes through the offsets it does report.
+func locatedError(raw []byte, dec *json.Decoder, err error) error {
+	off := dec.InputOffset()
+	var syntax *json.SyntaxError
+	if errors.As(err, &syntax) {
+		off = syntax.Offset
+	}
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		off = typeErr.Offset
+	}
+	line, col := lineCol(raw, off)
+	const unknown = "json: unknown field "
+	if strings.HasPrefix(err.Error(), unknown) {
+		// No offset in the error: a token walk finds the key. If the same name
+		// also appears earlier as a valid key, the line is the best guess; the
+		// field name in the message is exact.
+		field := strings.Trim(strings.TrimPrefix(err.Error(), unknown), `"`)
+		if l, c, ok := locateKey(raw, field); ok {
+			line, col = l, c
+		}
+	}
+	return fmt.Errorf("%d:%d: %w", line, col, err)
+}
+
+// lineCol turns a byte offset into a 1-based line and column.
+func lineCol(raw []byte, off int64) (int, int) {
+	line, col := 1, 1
+	for i := 0; i < len(raw) && int64(i) < off; {
+		r, size := utf8.DecodeRune(raw[i:])
+		if r == '\n' {
+			line++
+			col = 1
+		} else {
+			col++
+		}
+		i += size
+	}
+	return line, col
+}
+
+// locateKey walks the document to find the position of an object key, so an
+// unknown-field error names the typo's line instead of the object's last brace.
+func locateKey(raw []byte, field string) (int, int, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	var stack []bool // true for an object, false for an array
+	expectKey := false
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return 0, 0, false
+		}
+		if delim, ok := tok.(json.Delim); ok {
+			switch delim {
+			case '{':
+				stack = append(stack, true)
+				expectKey = true
+			case '[':
+				stack = append(stack, false)
+				expectKey = false
+			case '}', ']':
+				if len(stack) > 0 {
+					stack = stack[:len(stack)-1]
+				}
+				expectKey = len(stack) > 0 && stack[len(stack)-1]
+			}
+			continue
+		}
+		if len(stack) == 0 || !stack[len(stack)-1] {
+			continue
+		}
+		if expectKey {
+			if key, ok := tok.(string); ok && key == field {
+				line, col := lineCol(raw, dec.InputOffset())
+				return line, col, true
+			}
+			expectKey = false
+			continue
+		}
+		expectKey = true // the value ended; the next token is the next key
+	}
+}
+
+// validate rejects a config that would fail later, at the first send: a typo in
+// a harness name, a permission nobody checks, a participant with neither.
+func (c Config) validate() error {
+	for name, p := range c.Participants {
+		if name == "" || strings.TrimSpace(name) != name || strings.ContainsRune(name, ',') || strings.ContainsAny(name, "\x00\n\r\t") {
+			return fmt.Errorf("participant %q: a name cannot be empty, start or end with a space, or contain a comma, newline or tab (the chain is comma-separated)", name)
+		}
+		if name == "self" {
+			return errors.New(`participant "self": that is the local identity; pick another name`)
+		}
+		if p.Permission != "" && p.Permission != "read_only" && p.Permission != "write" {
+			return fmt.Errorf("participant %q: permission must be \"read_only\" or \"write\", got %q", name, p.Permission)
+		}
+		if p.Harness == "" && p.Spec == nil {
+			return fmt.Errorf("participant %q: set a harness or an inline spec", name)
+		}
+		if p.Harness == "" && p.Spec != nil && p.Spec.Bin == "" {
+			return fmt.Errorf("participant %q: an inline spec needs a \"bin\"", name)
+		}
+		if p.Harness != "" {
+			if _, ok := harness.Known(p.Harness); !ok {
+				return fmt.Errorf("participant %q: unknown harness %q (known: %s)", name, p.Harness, strings.Join(harness.Names(), ", "))
+			}
+		}
+	}
+	return nil
 }
 
 // Changed reports whether the file this config was read from has been edited
@@ -135,14 +277,47 @@ func (c *Config) normalize() {
 
 func (c Config) Save() error {
 	c.normalize()
-	if err := os.MkdirAll(filepath.Dir(c.path), 0o750); err != nil {
+	if err := c.validate(); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.path, append(raw, '\n'), 0o600)
+	// Write through a symlink instead of replacing the link with a file: a
+	// dotfiles config often points at a repo.
+	target := c.path
+	if resolved, err := filepath.EvalSymlinks(c.path); err == nil {
+		target = resolved
+	}
+	dir := filepath.Dir(target)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	// Write beside the target and rename: a crash or a full disk leaves the old
+	// config in place instead of a truncated one every harness fails to read.
+	tmp, err := os.CreateTemp(dir, ".config-*.json")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer func() { _ = os.Remove(name) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(append(raw, '\n')); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, target)
 }
 
 func (c Config) Path() string { return c.path }
