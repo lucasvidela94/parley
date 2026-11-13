@@ -427,6 +427,12 @@ func mergeFlagArgs(base, over harness.Spec) harness.Spec {
 	if over.ModelArgs != nil {
 		base.ModelArgs = over.ModelArgs
 	}
+	if over.EffortArgs != nil {
+		base.EffortArgs = over.EffortArgs
+	}
+	if over.Efforts != nil {
+		base.Efforts = over.Efforts
+	}
 	if over.ModelsArgs != nil {
 		base.ModelsArgs = over.ModelsArgs
 	}

@@ -977,6 +977,37 @@ func TestSendNamesTheFieldThatIsMissing(t *testing.T) {
 	}
 }
 
+func TestEffortNeedsAHarnessThatDeclaresIt(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"ok"}})
+	ctx := context.Background()
+	if _, err := env.e.Send(ctx, SendRequest{To: "opencode", Message: "hi", Effort: "high"}); err == nil || !strings.Contains(err.Error(), "has no effort flag") {
+		t.Fatalf("a harness without effort_args must refuse it: %v", err)
+	}
+	if _, err := env.e.Send(ctx, SendRequest{To: "claude", Message: "hi", Effort: "bogus"}); err == nil || !strings.Contains(err.Error(), "not one of") {
+		t.Fatalf("an unknown tier must name the accepted ones: %v", err)
+	}
+	if n := env.fakes["claude"].calls; n != 0 {
+		t.Fatalf("a refused effort must not reach the harness: %d calls", n)
+	}
+}
+
+func TestEffortGetsItsOwnSession(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"a", "b", "c"}})
+	ctx := context.Background()
+	for _, effort := range []string{"high", "high", "low"} {
+		if _, err := env.e.Send(ctx, SendRequest{To: "claude", Message: "q", Effort: effort}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := env.fakes["claude"]
+	if f.started != 2 || f.cont != 1 {
+		t.Fatalf("same effort must resume, a new one must start: started=%d cont=%d", f.started, f.cont)
+	}
+	if got := f.lastOpts().Effort; got != "low" {
+		t.Fatalf("effort did not reach the harness: %q", got)
+	}
+}
+
 func TestModelsAnswersEvenWithoutAListingCommand(t *testing.T) {
 	env := newTestEngine(t, nil)
 	env.e.cfg.Participants["lister"] = config.Participant{Spec: &harness.Spec{Bin: "sh", ModelsArgs: []string{"-c", "printf 'm1\nm2'"}}}

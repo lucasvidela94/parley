@@ -254,3 +254,18 @@ compatibility: a config written by a newer parley may name a field an older bina
 fix is to run the binary that wrote it, which is the same rule as the store. `participant` is
 singular so the list command and the participant names cannot collide with a subcommand.
 
+## D24 — Effort is a harness flag, never a composed model id
+**Decided (issue #39).** A call may pass an effort tier; it becomes the harness's own flag
+(`effort_args`, `{effort}`), and `efforts` lists the values the CLI accepts so a typo fails
+before a turn. Claude Code is the only built-in that declares one:
+`--effort low|medium|high|xhigh|max`, verified against 2.1.322's help and an accepted run (the
+turn did not complete on the machine of record because the account's payment was past due, so
+the tier's effect is unproven).
+
+Cursor's ids carry the tier (`claude-opus-5-5-high`) and OpenCode's variant is part of the model
+string (`provider/model#variant`). parley does not compose `{model}-{effort}`: that would be
+model-id knowledge in the binary, break ids that already carry a tier, and normalize vocabularies
+the harnesses do not share. A supported harness that does not declare `effort_args` refuses the
+flag and points at `parley models`. A turn with an effort gets its own session key, because a
+resume may keep the tier of the session it joins.
+

@@ -36,6 +36,12 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   config strictly: an unknown key, harness or permission is reported with `file:line:col` instead
   of being ignored until the first send. Saves are atomic and `0600`, and a missing binary is a
   warning rather than a refusal (D23).
+- **Effort per call, as the harness's own flag** (#39). `send_message(effort: …)` and
+  `parley send --effort <tier>` run one call at another tier when the spec declares
+  `effort_args`/`efforts`; Claude Code declares `--effort low|medium|high|xhigh|max` (2.1.322,
+  flag and values verified, the turn unproven). An unknown tier or a harness with no effort flag
+  is refused before spending a turn and points at `parley models`; parley does not compose
+  `model-effort` ids. A tier gets its own session key (D24).
 
 ### Fixed
 

@@ -28,6 +28,7 @@ type Reply struct {
 // session as an argument. Args is extra argv from the participant's config.
 type Options struct {
 	Model     string
+	Effort    string
 	Dir       string
 	ReadOnly  bool
 	SessionID string
@@ -81,6 +82,12 @@ type Spec struct {
 	ModelKeysPath string `json:"model_keys_path,omitempty"`
 
 	ModelArgs []string `json:"model_args,omitempty"`
+	// EffortArgs is argv appended when the call asks for an effort tier;
+	// {effort} is substituted. Efforts lists the values the CLI accepts, so a
+	// typo fails before a turn. A harness that encodes the tier in the model id
+	// declares neither: parley does not compose ids.
+	EffortArgs []string `json:"effort_args,omitempty"`
+	Efforts    []string `json:"efforts,omitempty"`
 	// ModelsArgs is the argv that makes the CLI print the models it accepts.
 	// parley shows that output untouched; it never parses model ids.
 	ModelsArgs   []string `json:"models_args,omitempty"`
@@ -135,8 +142,10 @@ var profiles = map[string]Spec{
 			"payment is past due":                "auth",
 			"oauth_not_allowed_for_organization": "auth",
 		},
-		Verified: true,
-		Notes:    "session id must be a UUID; parley mints one",
+		EffortArgs: []string{"--effort", "{effort}"},
+		Efforts:    []string{"low", "medium", "high", "xhigh", "max"},
+		Verified:   true,
+		Notes:      "session id must be a UUID; parley mints one; --effort and its values are verified against 2.1.322's help and an accepted run, but the turn did not complete on the machine of record (the account's payment was past due), so the tier's effect is unproven",
 	},
 	"opencode": {
 		Bin: "opencode",
@@ -290,6 +299,9 @@ func (s Spec) Render(cont bool, prompt string, o Options) []string {
 	if o.Model != "" {
 		src = append(src, s.ModelArgs...)
 	}
+	if o.Effort != "" {
+		src = append(src, s.EffortArgs...)
+	}
 	src = append(src, o.Args...)
 
 	out := make([]string, 0, len(src)+1)
@@ -300,6 +312,7 @@ func (s Spec) Render(cont bool, prompt string, o Options) []string {
 		}
 		a = strings.ReplaceAll(a, "{session}", o.SessionID)
 		a = strings.ReplaceAll(a, "{model}", o.Model)
+		a = strings.ReplaceAll(a, "{effort}", o.Effort)
 		a = strings.ReplaceAll(a, "{dir}", o.Dir)
 		a = strings.ReplaceAll(a, "{prompt}", prompt)
 		out = append(out, a)
