@@ -42,6 +42,10 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   flag and values verified, the turn unproven). An unknown tier or a harness with no effort flag
   is refused before spending a turn and points at `parley models`; parley does not compose
   `model-effort` ids. A tier gets its own session key (D24).
+- **A recipe for a long turn** (#40). `send_message` waits and the MCP server answers one call at a
+  time, so the skill and README now say to run a turn that may outlast the client from a shell in
+  the background, poll `parley read` (a live turn shows "turn in progress") and stop it with
+  `parley cancel`. No daemon and no async send: the channel stays synchronous (D6, D7).
 
 ### Fixed
 

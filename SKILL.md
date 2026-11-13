@@ -46,6 +46,18 @@ and any open question it raised.
 
 Done when the conversation is closed and the note states the outcome or the next step.
 
+## A turn that takes longer than the client
+
+`send_message` waits for the reply, and the MCP server answers one call at a time, so a blocked
+send is not a hung one you can poll from the same session. When a turn may outlast the client,
+run it from a shell:
+
+1. `parley send --to X --in cnv_... --timeout 900 "..." &`
+2. `parley read cnv_...` — a live turn shows `turn in progress: X, since HH:MM:SSZ`.
+3. `parley cancel cnv_...` when it should stop. A timeout records an error, never agreement.
+
+The reply lands in the transcript, so `read_conversation` finds it afterwards.
+
 ## A review or a debate that ends in a decision
 
 This is the pattern for "review this with claude and let both of you decide".
