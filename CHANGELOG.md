@@ -5,6 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/) (before 1.0, a mi
 behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 [lucasvidela94/parley](https://github.com/lucasvidela94/parley/issues).
 
+## [Unreleased]
+
+### Fixed
+
+- **Messages stay in order when two land in the same second.** `created_at` is RFC3339Nano text,
+  which trims trailing zeros, so `…00.5Z` compared as *later* than `…00.51Z`; `read` could show a
+  one-second burst backwards, and `models`/`participants` could pick the older reported model.
+  Queries now sort by `julianday(created_at)` (and `julianday(started_at)` for running turns),
+  which is chronological for both trimmed and untrimmed timestamps. A regression test inserts two
+  messages 10 ms apart in the same second.
+
 ## [0.7.0] - 2026-11-13
 
 ### Added
