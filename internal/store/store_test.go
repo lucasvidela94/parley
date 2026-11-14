@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -69,6 +70,35 @@ func TestLastReportedModelIgnoresWhatWasAskedFor(t *testing.T) {
 	got, at, ok, err := s.LastReportedModel(ctx, "claude")
 	if err != nil || !ok || got != "claude-opus-5-5" || at.IsZero() {
 		t.Fatalf("only the reported turn counts, and the later override must not win: %q %v %v %v", got, at, ok, err)
+	}
+}
+
+func TestSameSecondTimestampsKeepTheirOrder(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	c := Conversation{ID: NewID("cnv"), Topic: "t", Status: "open", CreatedAt: time.Now().UTC()}
+	if err := s.CreateConversation(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	// RFC3339Nano trims trailing zeros, so ".5Z" compares as text after
+	// ".51Z": ordering by the string puts the earlier turn last.
+	base := time.Date(2026, 11, 13, 4, 0, 0, 500_000_000, time.UTC)
+	for i, at := range []time.Time{base, base.Add(10 * time.Millisecond)} {
+		m := Message{
+			ConversationID: c.ID, Author: "claude", Kind: "message", Body: fmt.Sprintf("m%d", i),
+			Model: fmt.Sprintf("model-%d", i), ModelSource: "reported", CreatedAt: at,
+		}
+		if err := s.AddMessage(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgs, err := s.Messages(ctx, c.ID)
+	if err != nil || len(msgs) != 2 || msgs[0].Body != "m0" || msgs[1].Body != "m1" {
+		t.Fatalf("messages in the same second came back out of order: %+v %v", msgs, err)
+	}
+	got, _, ok, err := s.LastReportedModel(ctx, "claude")
+	if err != nil || !ok || got != "model-1" {
+		t.Fatalf("the later report must win: %q %v %v", got, ok, err)
 	}
 }
 

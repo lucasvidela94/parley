@@ -217,7 +217,7 @@ func (s *Store) AddMessage(ctx context.Context, m Message) error {
 }
 
 func (s *Store) Messages(ctx context.Context, conversationID string) ([]Message, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,author,kind,model,model_source,body,cost_usd,input_tokens,output_tokens,created_at FROM messages WHERE conversation_id=? ORDER BY created_at, rowid`, conversationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,author,kind,model,model_source,body,cost_usd,input_tokens,output_tokens,created_at FROM messages WHERE conversation_id=? ORDER BY julianday(created_at), rowid`, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +242,7 @@ func (s *Store) LastReportedModel(ctx context.Context, author string) (model str
 	var created string
 	err = s.db.QueryRowContext(ctx, `SELECT model, created_at FROM messages
 WHERE author=? AND model_source='reported' AND model<>''
-ORDER BY created_at DESC, rowid DESC LIMIT 1`, author).Scan(&model, &created)
+ORDER BY julianday(created_at) DESC, rowid DESC LIMIT 1`, author).Scan(&model, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", time.Time{}, false, nil
 	}
@@ -332,7 +332,7 @@ func (s *Store) RequestCancel(ctx context.Context, conversationID string, staleB
 	if _, err := s.db.ExecContext(ctx, `UPDATE running_turns SET cancel=1 WHERE conversation_id=?`, conversationID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,participant,started_at FROM running_turns WHERE conversation_id=? ORDER BY started_at`, conversationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,participant,started_at FROM running_turns WHERE conversation_id=? ORDER BY julianday(started_at)`, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +354,7 @@ func (s *Store) RequestCancel(ctx context.Context, conversationID string, staleB
 // Turns not seen since staleBefore belong to a process that died and are left
 // out.
 func (s *Store) RunningTurns(ctx context.Context, conversationID string, staleBefore time.Time) ([]RunningTurn, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,participant,started_at FROM running_turns WHERE conversation_id=? AND seen_at>=? ORDER BY started_at`, conversationID, ts(staleBefore))
+	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,participant,started_at FROM running_turns WHERE conversation_id=? AND seen_at>=? ORDER BY julianday(started_at)`, conversationID, ts(staleBefore))
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +382,7 @@ func (s *Store) ListConversations(ctx context.Context, dir string, limit int) ([
 		q += ` WHERE dir=?`
 		args = append(args, dir)
 	}
-	q += ` ORDER BY created_at DESC LIMIT ?`
+	q += ` ORDER BY julianday(created_at) DESC LIMIT ?`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
