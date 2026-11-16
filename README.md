@@ -464,6 +464,8 @@ Contributor rules live in [`AGENTS.md`](AGENTS.md). To add a tool or a command, 
 
 - [`SKILL.md`](SKILL.md) — the usage skill installed by `parley setup`.
 - [`docs/decisions.md`](docs/decisions.md) — what was decided and why, including reversals.
+- [`docs/report-template.md`](docs/report-template.md) — how to raise a bug or a topic, in any
+  tracker or channel: evidence someone else can check, a falsifier, and who raised it.
 - [`docs/prior-art.md`](docs/prior-art.md) — what already exists and what doesn't.
 - [`docs/origin.md`](docs/origin.md) — origin of the project.
 
