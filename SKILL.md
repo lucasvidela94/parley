@@ -117,6 +117,12 @@ Done when you can name each voice's position, where they differ, and what you de
   history still travels in the prompt. For an effort tier, pass `effort` only when the harness
   declares one (Claude Code: low, medium, high, xhigh, max); Cursor and OpenCode carry it in the
   model id, so use the full id.
+- **An independent check runs on a different model.** When one participant verifies another's
+  work, pick one whose model differs from the author's: `participants` and `models(participant)`
+  show the configured and last reported model of each. The loop guard compares participant
+  names, so two participants on one model pass it and agree with the same blind spots. Model ids
+  are each harness's own spelling (`claude-opus-5-5` and `claude-opus-5-5-high` are one model).
+  When neither model is pinned or reported, say the check's independence is unknown.
 - **Writing needs two switches.** `write=true` on the call and `permission: "write"` for the
   participant in the config; with a `read_only` participant the flag is ignored and the
   result carries a notice.

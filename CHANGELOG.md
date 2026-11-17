@@ -7,6 +7,15 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 
 ## [Unreleased]
 
+### Changed
+
+- **The skill says an independent check needs a different model** (#57). The loop guard compares
+  participant names, so two participants on one model look independent. The skill now says to
+  verify with a participant whose model differs from the author's, and to say independence is
+  unknown when neither model is pinned or reported. No same-model notice in core: in the
+  maintainer's store, about 12 of 170 nested replies had a known model and no caller model was
+  ever known, so an exact-match notice would almost never fire.
+
 ### Fixed
 
 - **Messages stay in order when two land in the same second.** `created_at` is RFC3339Nano text,
