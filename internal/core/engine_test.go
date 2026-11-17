@@ -76,6 +76,8 @@ func (f *fake) reply(ctx context.Context, prompt string, o harness.Options, cont
 		close(f.running)
 		<-ctx.Done()
 		return harness.Reply{}, context.Cause(ctx)
+	case out == "PANIC":
+		panic("harness bug") //nolint:forbidigo // the fake stands in for a bug that panics mid-turn
 	case strings.HasPrefix(out, "ERR:"):
 		return harness.Reply{}, errors.New(strings.TrimPrefix(out, "ERR:"))
 	}
@@ -982,6 +984,25 @@ func TestTheLockIsHeldUntilTheOutcomeIsRecorded(t *testing.T) {
 				t.Fatalf("lock released %d times with %d %s recorded; want once, after the %s", releases, outcomes, tc.kind, tc.kind)
 			}
 		})
+	}
+}
+
+func TestTheParticipantIsFreedWhenATurnPanics(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"PANIC", "fine"}})
+	env.e.pollEvery = time.Hour
+	env.e.staleAfter = time.Hour
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the fake was meant to panic")
+			}
+		}()
+		_, _ = env.e.Send(context.Background(), SendRequest{To: "claude", Message: "q"})
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := env.e.Send(ctx, SendRequest{To: "claude", Message: "q"}); err != nil {
+		t.Fatalf("the participant is still held after a turn panicked: %v", err)
 	}
 }
 
