@@ -277,7 +277,7 @@ WHERE id=? AND (max_turns=0 OR turns<max_turns)`, now(), id)
 func (s *Store) AcquireLock(ctx context.Context, key, holder string, staleBefore time.Time) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO turn_locks(lock_key,holder,seen_at) VALUES(?1,?2,?3)
 ON CONFLICT(lock_key) DO UPDATE SET holder=excluded.holder, seen_at=excluded.seen_at
-WHERE turn_locks.seen_at < ?4`, key, holder, now(), ts(staleBefore))
+WHERE julianday(turn_locks.seen_at) < julianday(?4)`, key, holder, now(), ts(staleBefore))
 	if err != nil {
 		return false, err
 	}
@@ -326,7 +326,7 @@ func (s *Store) TurnCancelled(ctx context.Context, id string) (bool, error) {
 // Turns not seen since staleBefore were left by a process that died; they are
 // dropped instead of reported as running.
 func (s *Store) RequestCancel(ctx context.Context, conversationID string, staleBefore time.Time) ([]RunningTurn, error) {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM running_turns WHERE conversation_id=? AND seen_at<?`, conversationID, ts(staleBefore)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM running_turns WHERE conversation_id=? AND julianday(seen_at)<julianday(?)`, conversationID, ts(staleBefore)); err != nil {
 		return nil, err
 	}
 	if _, err := s.db.ExecContext(ctx, `UPDATE running_turns SET cancel=1 WHERE conversation_id=?`, conversationID); err != nil {
@@ -354,7 +354,7 @@ func (s *Store) RequestCancel(ctx context.Context, conversationID string, staleB
 // Turns not seen since staleBefore belong to a process that died and are left
 // out.
 func (s *Store) RunningTurns(ctx context.Context, conversationID string, staleBefore time.Time) ([]RunningTurn, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,participant,started_at FROM running_turns WHERE conversation_id=? AND seen_at>=? ORDER BY julianday(started_at)`, conversationID, ts(staleBefore))
+	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,participant,started_at FROM running_turns WHERE conversation_id=? AND julianday(seen_at)>=julianday(?) ORDER BY julianday(started_at)`, conversationID, ts(staleBefore))
 	if err != nil {
 		return nil, err
 	}
