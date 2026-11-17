@@ -1,7 +1,7 @@
 GO ?= go
 BIN ?= parley
 
-.PHONY: build fmt fmt-check vet lint test race check vuln hooks clean
+.PHONY: build fmt fmt-check vet lint test race check template-check vuln hooks clean
 
 build:
 	$(GO) build -trimpath -o $(BIN) .
@@ -24,7 +24,13 @@ test:
 race:
 	$(GO) test -race ./...
 
-check: fmt-check vet lint test
+# The GitHub issue template is an adapter: front matter plus the canonical,
+# tracker-agnostic text in docs/report-template.md. They must not drift.
+template-check:
+	@sed '1,/^---$$/d' .github/ISSUE_TEMPLATE/report.md | diff -u docs/report-template.md - \
+		|| { echo "template drift: .github/ISSUE_TEMPLATE/report.md must be front matter + docs/report-template.md"; exit 1; }
+
+check: fmt-check vet lint test template-check
 	@echo "check: ok"
 
 vuln:
