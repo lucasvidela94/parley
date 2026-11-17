@@ -102,6 +102,43 @@ func TestSameSecondTimestampsKeepTheirOrder(t *testing.T) {
 	}
 }
 
+func TestStalenessComparesTimesNotStrings(t *testing.T) {
+	early := time.Date(2026, 11, 13, 4, 0, 0, 500_000_000, time.UTC)
+	late := early.Add(10 * time.Millisecond)
+	for _, tc := range []struct {
+		name            string
+		seen, threshold time.Time
+		live            bool
+	}{
+		{"seen after the threshold is live", late, early, true},
+		{"seen before the threshold is stale", early, late, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTemp(t)
+			ctx := context.Background()
+			if _, err := s.db.Exec(`INSERT INTO turn_locks(lock_key,holder,seen_at) VALUES('k','a',?)`, ts(tc.seen)); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.AcquireLock(ctx, "k", "b", tc.threshold)
+			if err != nil || got == tc.live {
+				t.Fatalf("lock seen %s, threshold %s: taken=%v %v", ts(tc.seen), ts(tc.threshold), got, err)
+			}
+
+			if _, err := s.db.Exec(`INSERT INTO running_turns(id,conversation_id,participant,started_at,seen_at) VALUES('trn','cnv','claude',?,?)`, ts(tc.seen), ts(tc.seen)); err != nil {
+				t.Fatal(err)
+			}
+			running, err := s.RunningTurns(ctx, "cnv", tc.threshold)
+			if err != nil || (len(running) == 1) != tc.live {
+				t.Fatalf("running turns: %+v %v", running, err)
+			}
+			cancelled, err := s.RequestCancel(ctx, "cnv", tc.threshold)
+			if err != nil || (len(cancelled) == 1) != tc.live {
+				t.Fatalf("cancel requested for: %+v %v", cancelled, err)
+			}
+		})
+	}
+}
+
 func TestConversationRoundtrip(t *testing.T) {
 	s := openTemp(t)
 	now := time.Now().UTC()

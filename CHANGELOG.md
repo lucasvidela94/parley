@@ -20,6 +20,10 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   gap and build its prompt without the previous answer. The lock is now held until the outcome is
   in the transcript. Staleness of a lease or running turn is its own setting (still 5 s), no longer
   derived from the poll interval, so tests that poll fast no longer lose a live lease under load.
+- **A live lease or running turn is never judged stale by string order** (#60). The staleness checks
+  in `AcquireLock`, `RunningTurns` and `RequestCancel` compared RFC3339Nano text, so within one
+  second a live lock could be handed to a second holder, or a live turn hidden or dropped. They now
+  compare `julianday(...)`, like message ordering since #55.
 
 ## [0.7.0] - 2026-11-13
 
