@@ -27,7 +27,10 @@ var (
 )
 
 // cancelPoll is how often a running turn checks the store for a cancel request.
-const cancelPoll = time.Second
+const (
+	cancelPoll = time.Second
+	staleAfter = 5 * cancelPoll
+)
 
 // Engine is the whole bridge: participants, their sessions, and conversations.
 // It knows nothing about debates, votes or decisions. Those are conventions the
@@ -40,6 +43,7 @@ type Engine struct {
 	chain      []string
 	newHarness func(config.Participant) harness.Harness
 	pollEvery  time.Duration
+	staleAfter time.Duration
 }
 
 type SendRequest struct {
@@ -103,7 +107,7 @@ func NewWith(cfg config.Config, st *store.Store, factory func(config.Participant
 			chain = append(chain, c)
 		}
 	}
-	return &Engine{cfg: cfg, st: st, identity: id, depth: depth, chain: chain, newHarness: factory, pollEvery: cancelPoll}
+	return &Engine{cfg: cfg, st: st, identity: id, depth: depth, chain: chain, newHarness: factory, pollEvery: cancelPoll, staleAfter: staleAfter}
 }
 
 func (e *Engine) Identity() string      { return e.identity }
@@ -288,8 +292,14 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 		history:      history,
 		conversation: conv,
 	}
+	var release func()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 	rep, err := e.cancellable(ctx, conv.ID, req.To, func(ctx context.Context) (harness.Reply, error) {
-		return e.turn(ctx, turnRequest{name: req.To, model: req.Model, effort: req.Effort, timeout: requestTimeout(req.TimeoutS, e.cfg.DefaultTimeoutS), write: req.Write}, func(dir string, readOnly bool) string {
+		rep, unlock, err := e.turn(ctx, turnRequest{name: req.To, model: req.Model, effort: req.Effort, timeout: requestTimeout(req.TimeoutS, e.cfg.DefaultTimeoutS), write: req.Write}, func(dir string, readOnly bool) string {
 			in.dir = dir
 			in.readOnly = readOnly
 			// A turn that waited for the participant starts after other replies
@@ -297,6 +307,8 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 			in.history = e.freshHistory(ctx, conv.ID, questionID, in.history)
 			return renderPrompt(in)
 		})
+		release = unlock
+		return rep, err
 	})
 	if err != nil {
 		// Recorded with a fresh context: a cancelled turn still owes the
@@ -412,7 +424,7 @@ func (e *Engine) Read(ctx context.Context, id string) (View, error) {
 		return View{}, err
 	}
 	// Same staleness rule as Cancel: a turn nobody heartbeats is a dead process.
-	running, err := e.st.RunningTurns(ctx, id, time.Now().Add(-5*e.pollEvery))
+	running, err := e.st.RunningTurns(ctx, id, time.Now().Add(-e.staleAfter))
 	if err != nil {
 		return View{}, err
 	}
@@ -466,7 +478,7 @@ func (e *Engine) Cancel(ctx context.Context, id string) ([]store.RunningTurn, er
 		return nil, err
 	}
 	// A live turn heartbeats every poll; five missed polls means its process died.
-	turns, err := e.st.RequestCancel(ctx, id, time.Now().Add(-5*e.pollEvery))
+	turns, err := e.st.RequestCancel(ctx, id, time.Now().Add(-e.staleAfter))
 	if err != nil {
 		return nil, err
 	}
@@ -559,11 +571,12 @@ func turnSessionKey(name, model, effort string) string {
 	return strings.Join(parts, modelSep)
 }
 
-func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string, readOnly bool) string) (harness.Reply, error) {
+func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string, readOnly bool) string) (rep harness.Reply, release func(), err error) {
+	release = func() {}
 	name, timeout := tr.name, tr.timeout
 	spec, p, err := e.cfg.Spec(name)
 	if err != nil {
-		return harness.Reply{}, err
+		return harness.Reply{}, release, err
 	}
 	dir := e.participantDir(name)
 	var h harness.Harness
@@ -590,30 +603,30 @@ func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	release, err := e.lockSession(ctx, spec, sessionKey, dir)
+	unlock, err := e.lockSession(ctx, spec, sessionKey, dir)
 	if err != nil {
-		return harness.Reply{}, err
+		return harness.Reply{}, release, err
 	}
-	defer release()
+	release = unlock
 
 	sid, ok, err := e.st.Session(ctx, sessionKey, dir)
 	if err != nil {
-		return harness.Reply{}, err
+		return harness.Reply{}, release, err
 	}
 	if ok && spec.SupportsContinuity() {
 		opts.SessionID = sid
 		rep, err := h.Continue(ctx, build(dir, readOnly), opts)
 		if err == nil {
-			return rep, nil
+			return rep, release, nil
 		}
 		if !missingSession(err) {
-			return rep, err
+			return rep, release, err
 		}
 	}
 	opts.SessionID = newUUID()
-	rep, err := h.Start(ctx, build(dir, readOnly), opts)
+	rep, err = h.Start(ctx, build(dir, readOnly), opts)
 	if err != nil {
-		return rep, err
+		return rep, release, err
 	}
 	sid = rep.SessionID
 	if sid == "" && spec.Session == "arg" {
@@ -622,7 +635,7 @@ func (e *Engine) turn(ctx context.Context, tr turnRequest, build func(dir string
 	if sid != "" {
 		_ = e.st.SetSession(ctx, sessionKey, dir, sid)
 	}
-	return rep, nil
+	return rep, release, nil
 }
 
 // lockSession makes turns that share a harness session run one at a time, even
@@ -638,7 +651,7 @@ func (e *Engine) lockSession(ctx context.Context, spec harness.Spec, key, dir st
 	}
 	lockKey, holder := key+"\x00"+dir, store.NewID("lck")
 	for {
-		got, err := e.st.AcquireLock(ctx, lockKey, holder, time.Now().Add(-5*e.pollEvery))
+		got, err := e.st.AcquireLock(ctx, lockKey, holder, time.Now().Add(-e.staleAfter))
 		if ctx.Err() != nil {
 			// The query may have failed because the turn was cancelled or timed
 			// out; say that, not the driver's wording.

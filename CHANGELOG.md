@@ -15,6 +15,11 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   Queries now sort by `julianday(created_at)` (and `julianday(started_at)` for running turns),
   which is chronological for both trimmed and untrimmed timestamps. A regression test inserts two
   messages 10 ms apart in the same second.
+- **A turn that waited for a participant sees the reply it waited for** (#53). The session lock
+  was released before the reply (or error) was recorded, so a waiting turn could take it in that
+  gap and build its prompt without the previous answer. The lock is now held until the outcome is
+  in the transcript. Staleness of a lease or running turn is its own setting (still 5 s), no longer
+  derived from the poll interval, so tests that poll fast no longer lose a live lease under load.
 
 ## [0.7.0] - 2026-11-13
 

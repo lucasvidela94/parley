@@ -381,7 +381,7 @@ func TestMaxTurnsRefusesTheNextTurn(t *testing.T) {
 
 func TestCancelStopsARunningTurn(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"BLOCK"}})
-	env.e.pollEvery = 20 * time.Millisecond // stale after 5 polls: 1ms flaked under -race
+	env.e.pollEvery = 20 * time.Millisecond
 	ctx := context.Background()
 	view, err := env.e.Open(ctx, "slow", "", 0)
 	if err != nil {
@@ -419,8 +419,6 @@ func TestCancelStopsARunningTurn(t *testing.T) {
 
 func TestReadShowsATurnInProgress(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"BLOCK"}})
-	// A turn is stale after five missed polls; 1ms would make that 5ms, which
-	// a loaded -race run can miss.
 	env.e.pollEvery = 20 * time.Millisecond
 	ctx := context.Background()
 	view, err := env.e.Open(ctx, "slow", "", 0)
@@ -949,11 +947,50 @@ func TestRunningTurnRenewsItsLease(t *testing.T) {
 	}
 }
 
+func TestTheLockIsHeldUntilTheOutcomeIsRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name, script, kind string
+	}{
+		{"reply", "the answer", "message"},
+		{"error", "ERR:boom", "error"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newTestEngine(t, map[string][]string{"claude": {tc.script}})
+			db, err := sql.Open("sqlite", "file:"+env.e.cfg.StorePath()+"?_pragma=busy_timeout(5000)")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			for _, q := range []string{
+				`CREATE TABLE released(outcomes INTEGER)`,
+				`CREATE TRIGGER on_release AFTER DELETE ON turn_locks BEGIN
+				   INSERT INTO released SELECT count(*) FROM messages WHERE author='claude' AND kind='` + tc.kind + `';
+				 END`,
+			} {
+				if _, err := db.Exec(q); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			_, _ = env.e.Send(context.Background(), SendRequest{To: "claude", Message: "q"})
+
+			var releases, outcomes int
+			if err := db.QueryRow(`SELECT count(*), coalesce(sum(outcomes),0) FROM released`).Scan(&releases, &outcomes); err != nil {
+				t.Fatal(err)
+			}
+			if releases != 1 || outcomes != 1 {
+				t.Fatalf("lock released %d times with %d %s recorded; want once, after the %s", releases, outcomes, tc.kind, tc.kind)
+			}
+		})
+	}
+}
+
 func TestTheParticipantIsFreedWhenATurnFails(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"ERR:boom", "fine"}})
 	// A lock that outlived its turn would be waited out only after the staleness
 	// threshold, which is an hour here: the bounded context turns that into a failure.
 	env.e.pollEvery = time.Hour
+	env.e.staleAfter = time.Hour
 	for i, wantErr := range []bool{true, false} {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		_, err := env.e.Send(ctx, SendRequest{To: "claude", Message: "q"})
