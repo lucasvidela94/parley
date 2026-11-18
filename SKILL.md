@@ -122,7 +122,9 @@ Done when you can name each voice's position, where they differ, and what you de
   show the configured and last reported model of each. The loop guard compares participant
   names, so two participants on one model pass it and agree with the same blind spots. Model ids
   are each harness's own spelling (`claude-opus-5-5` and `claude-opus-5-5-high` are one model).
-  When neither model is pinned or reported, say the check's independence is unknown.
+  A model followed by `(declared)` is the author's own claim (`PARLEY_MODEL`), not something
+  parley saw: it can show the two sides differed, never prove independence. When neither model is
+  pinned or reported, say the check's independence is unknown.
 - **Writing needs two switches.** `write=true` on the call and `permission: "write"` for the
   participant in the config; with a `read_only` participant the flag is ignored and the
   result carries a notice.

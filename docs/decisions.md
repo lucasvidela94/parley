@@ -217,7 +217,8 @@ configured model, the last model the harness reported, and the harness's own lis
 
 The store records `model_source` on every message: `configured` (the participant's `model`),
 `override` (a per-call `model`) or `reported` (the turn pinned nothing and the harness named the
-model it ran). Only `reported` can describe a harness default. Before this, `Message.Model` held
+model it ran); D25 adds `declared` (the author named its own model). Only `reported` can describe a
+harness default. Before this, `Message.Model` held
 the requested model whenever one was set, so "the last model seen" was the request echoed back,
 not an observation; only Claude reports one (`model_keys_path`), and the store had no way to tell
 the two apart. `participants`/`models` show the reported model as history with its date, never as
@@ -269,3 +270,25 @@ the harnesses do not share. A supported harness that does not declare `effort_ar
 flag and points at `parley models`. A turn with an effort gets its own session key, because a
 resume may keep the tier of the session it joins.
 
+
+## D25 — The caller's model is declared, never guessed
+**Decided (issue #67).** A session that starts a chain knew only its name, so a record could show
+which model answered but never which one asked, and #57 could not check independence for the caller.
+`PARLEY_MODEL` travels on the question message with `model_source='declared'`, and `read` marks it
+`(declared)`, in the message line and in the header. A declared model is a claim about itself: it
+can show that two sides ran different models, never prove it, and `models`/"last reported by the
+harness" ignore it.
+
+Env only, no `identity_model` in the config: the config file is one per user and shared by every
+harness on the machine, so one value there would claim the same model for all of them. `identity`
+escapes that only because `parley setup` writes it per MCP registration.
+
+The child env always carries `PARLEY_MODEL`, empty when parley pinned nothing. A child inherits the
+whole environment (`harness/cli.go` appends to `os.Environ()`), and `os/exec` keeps the last value of
+a repeated key, so the always-present key is what stops a grandchild from claiming its parent's
+model. The value is the model parley pinned, resolved once and fed to both the harness and the env,
+because `args` can still override the pin and the harness can ignore it.
+
+`View.Authors` keeps the ids raw and lists the declared ones apart, so a machine comparing models is
+not handed presentation text; only the markdown adds the mark, and only for an id that no message
+from that author pinned or reported.

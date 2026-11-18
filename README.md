@@ -146,6 +146,15 @@ record reads well: `"identity": "momo"`. A reply also records the participant's 
 `model`, so `read` shows `### kimi · opencode-go/kimi-k3` and a header listing every voice in
 the order it first spoke.
 
+A question can record the model that asked: set `PARLEY_MODEL` in the environment of the
+process that runs `parley mcp` (the same place `PARLEY_IDENTITY` goes). It is opaque and never
+validated, and parley never guesses it. Because it is what the caller says about itself, `read`
+marks it: `### momo · kimi-k3 (declared)`. That is not the same claim as a pinned or reported
+model, so a record can show whether the two sides ran different models without pretending the
+declared one was verified. When parley hands the turn to a child, it passes the model it pinned
+for that child (or an empty `PARLEY_MODEL` when it pinned none), so a chain never inherits its
+parent's model.
+
 ### Cost and cancelling
 
 - `--max-turns N` (`max_turns`) caps a conversation: the send after the Nth is refused with
@@ -304,8 +313,8 @@ session (claude ignores `--model` when it resumes, codex warns), and the convers
 still goes in the prompt, so nothing is lost. `parley session reset <name>` clears them all.
 
 A running MCP server notices an edited config file on its next call; a file that no longer
-parses is reported and the previous config stays in use. The identity and the store path are
-read once, at startup.
+parses is reported and the previous config stays in use. The identity, the declared model and
+the store path are read once, at startup.
 
 | top-level field | meaning |
 |---|---|

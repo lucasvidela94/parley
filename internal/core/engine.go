@@ -30,6 +30,11 @@ var (
 const (
 	cancelPoll = time.Second
 	staleAfter = 5 * cancelPoll
+
+	// modelDeclared is the source of a model the author named itself
+	// (PARLEY_MODEL), as opposed to one parley pinned or the harness reported.
+	// It is a claim, not an observation, and read shows it as such.
+	modelDeclared = "declared"
 )
 
 // Engine is the whole bridge: participants, their sessions, and conversations.
@@ -39,6 +44,7 @@ type Engine struct {
 	cfg        config.Config
 	st         *store.Store
 	identity   string
+	model      string // the model the caller declared it runs, empty when unknown
 	depth      int
 	chain      []string
 	newHarness func(config.Participant) harness.Harness
@@ -87,6 +93,10 @@ type View struct {
 type Author struct {
 	Name   string   `json:"name"`
 	Models []string `json:"models,omitempty"`
+	// Declared holds the models this author named about itself (PARLEY_MODEL)
+	// and nothing else vouched for. The ids stay raw so a machine comparing
+	// models is not handed presentation text; the view marks them.
+	Declared []string `json:"declared,omitempty"`
 }
 
 func New(cfg config.Config, st *store.Store) *Engine { return NewWith(cfg, st, nil) }
@@ -107,10 +117,11 @@ func NewWith(cfg config.Config, st *store.Store, factory func(config.Participant
 			chain = append(chain, c)
 		}
 	}
-	return &Engine{cfg: cfg, st: st, identity: id, depth: depth, chain: chain, newHarness: factory, pollEvery: cancelPoll, staleAfter: staleAfter}
+	return &Engine{cfg: cfg, st: st, identity: id, model: os.Getenv("PARLEY_MODEL"), depth: depth, chain: chain, newHarness: factory, pollEvery: cancelPoll, staleAfter: staleAfter}
 }
 
 func (e *Engine) Identity() string      { return e.identity }
+func (e *Engine) DeclaredModel() string { return e.model }
 func (e *Engine) Config() config.Config { return e.cfg }
 func (e *Engine) Shutdown() error       { return e.st.Close() }
 
@@ -276,7 +287,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	// turn already counted stays counted; failing closed is the safe side of a
 	// budget.
 	questionID := store.NewID("msg")
-	if err := e.st.AddMessage(ctx, store.Message{ID: questionID, ConversationID: conv.ID, Author: e.identity, Kind: "message", Body: msg}); err != nil {
+	if err := e.recordQuestion(ctx, conv.ID, questionID, msg); err != nil {
 		return SendResult{}, fmt.Errorf("record message: %w", err)
 	}
 	model := e.callModel(req)
@@ -337,6 +348,17 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	}
 	conv, _ = e.st.Conversation(ctx, conv.ID)
 	return SendResult{Conversation: conv, Reply: reply, CostUSD: rep.CostUSD, Notice: e.writeNotice(req)}, nil
+}
+
+// recordQuestion stores the caller's message with the model it declared it
+// runs. That is a claim about itself, never guessed, so a record can show which
+// model asked as well as which answered.
+func (e *Engine) recordQuestion(ctx context.Context, convID, questionID, body string) error {
+	m := store.Message{ID: questionID, ConversationID: convID, Author: e.identity, Kind: "message", Body: body}
+	if e.model != "" {
+		m.Model, m.ModelSource = e.model, modelDeclared
+	}
+	return e.st.AddMessage(ctx, m)
 }
 
 // callModel is the model a call asks for: its own override, else the
@@ -428,6 +450,10 @@ func (e *Engine) Read(ctx context.Context, id string) (View, error) {
 	}
 	v := View{Conversation: conv, Messages: msgs, Total: len(msgs), Running: running}
 	seen := map[string]int{}
+	// A model is only "declared" when nothing else vouched for it: if the same
+	// id was also configured, overridden or reported for this author, the
+	// transcript shows it plain, because there it is more than a claim.
+	vouched := map[string]bool{}
 	for j := range msgs {
 		m := &msgs[j]
 		v.CostUSD += m.CostUSD
@@ -440,9 +466,22 @@ func (e *Engine) Read(ctx context.Context, id string) (View, error) {
 			seen[m.Author] = i
 			v.Authors = append(v.Authors, Author{Name: m.Author})
 		}
-		if m.Model != "" && !slices.Contains(v.Authors[i].Models, m.Model) {
-			v.Authors[i].Models = append(v.Authors[i].Models, m.Model)
+		if m.Model == "" {
+			continue
 		}
+		a := &v.Authors[i]
+		if !slices.Contains(a.Models, m.Model) {
+			a.Models = append(a.Models, m.Model)
+		}
+		key := m.Author + "\x00" + m.Model
+		if m.ModelSource == modelDeclared && !vouched[key] {
+			if !slices.Contains(a.Declared, m.Model) {
+				a.Declared = append(a.Declared, m.Model)
+			}
+			continue
+		}
+		vouched[key] = true
+		a.Declared = slices.DeleteFunc(a.Declared, func(s string) bool { return s == m.Model })
 	}
 	return v, nil
 }
@@ -583,13 +622,16 @@ func (e *Engine) turn(ctx context.Context, release *func(), tr turnRequest, buil
 		h = harness.NewCLI(spec)
 	}
 	readOnly := e.readOnly(name, tr.write)
-	opts := harness.Options{Model: p.Model, Effort: tr.effort, Dir: dir, ReadOnly: readOnly, Env: e.childEnv(name), Args: p.Args}
+	// One resolution feeds both the harness and the child's PARLEY_MODEL, so
+	// what the child is told it runs cannot drift from what was asked for.
+	model := p.Model
 	sessionKey := name
 	keyModel := ""
 	if tr.model != "" && tr.model != p.Model {
-		opts.Model = tr.model
+		model = tr.model
 		keyModel = tr.model
 	}
+	opts := harness.Options{Model: model, Effort: tr.effort, Dir: dir, ReadOnly: readOnly, Env: e.childEnv(name, model), Args: p.Args}
 	if keyModel != "" || tr.effort != "" {
 		if keyModel == "" {
 			keyModel = p.Model
@@ -732,12 +774,17 @@ func (e *Engine) readOnly(name string, callerWantsWrite bool) bool {
 	return e.cfg.Participants[name].ReadOnly() || !callerWantsWrite
 }
 
-func (e *Engine) childEnv(name string) []string {
+// childEnv is what the next link inherits. PARLEY_MODEL is always set, empty
+// when parley pinned nothing: the child inherits the parent's whole environment
+// (harness cli.go), and os/exec keeps the last value of a repeated key, so an
+// always-present key is what stops a grandchild from claiming its parent's model.
+func (e *Engine) childEnv(name, model string) []string {
 	chain := append(append([]string{}, e.chain...), name)
 	return []string{
 		"PARLEY_DEPTH=" + strconv.Itoa(e.depth+1),
 		"PARLEY_CHAIN=" + strings.Join(chain, ","),
 		"PARLEY_IDENTITY=" + name,
+		"PARLEY_MODEL=" + model,
 	}
 }
 

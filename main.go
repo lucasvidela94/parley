@@ -119,7 +119,7 @@ func usage() {
 
 send without --in creates an ephemeral one-turn conversation. Without --write
 the recipient runs in its harness's read-only mode (see parley participants).
-Local identity: PARLEY_IDENTITY. Config: parley setup.
+Local identity: PARLEY_IDENTITY, declared model: PARLEY_MODEL. Config: parley setup.
 `)
 }
 
@@ -156,7 +156,11 @@ func cmdParticipants() error {
 	for _, p := range e.Participants(context.Background()) {
 		fmt.Printf("%-10s %-12s %-34s %s\n", p["name"], p["harness"], modelLabel(p), p["permission"])
 	}
-	fmt.Printf("\nlocal identity: %s\nstore: %s\n", e.Identity(), e.Config().StorePath())
+	fmt.Printf("\nlocal identity: %s\n", e.Identity())
+	if m := e.DeclaredModel(); m != "" {
+		fmt.Printf("declared model: %s (unverified)\n", m)
+	}
+	fmt.Printf("store: %s\n", e.Config().StorePath())
 	return nil
 }
 
