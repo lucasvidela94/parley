@@ -323,3 +323,18 @@ turn of that session id and records the full value when the total drops (a new s
 harness that reset). The store keeps the last total per harness session id, which the session lock
 already serialises. Rows written before this decision keep their inflated value and are not
 rewritten: the fix cannot recover a per-turn number the store never had.
+
+## D28 — Usage is per participant and model; token totals never cross rows
+**Decided (issue #66).** `usage` answers "which voice is worth what it costs" without pretending
+the numbers are comparable. Rows are author + model + where the model came from (`configured`,
+`override`, `reported`, `declared`; the model empty when the harness named none), with messages,
+failed turns, cost and tokens, and with how many messages actually carried a cost or a token count:
+OpenCode reported tokens on 11 of 83 messages and Claude on none, and a total would hide that gap.
+
+Cost adds up because it is dollars; tokens do not, because harnesses count them differently. Cache
+reads and writes are their own columns: a one-word Claude reply reports 2 input tokens next to 23035
+written and 9222 read, and one "input" number would imply a price parley cannot back up. Claude
+Code's `usage` fields are per turn; its `total_cost_usd` is not (D27).
+
+The store records questions and replies as the same kind, so the summary says "messages" and states
+that questions from this side are included. Failures are their own kind, so that column is exact.

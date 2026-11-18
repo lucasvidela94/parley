@@ -16,8 +16,10 @@ type Reply struct {
 	CostUSD   float64
 	// InputTokens and OutputTokens are what the harness reported for the turn,
 	// 0 when it said nothing. They are not normalised across harnesses.
-	InputTokens  int
-	OutputTokens int
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
 	// Model is what the harness says it ran, when its output says so. Empty
 	// means unknown, never a guess.
 	Model string
@@ -67,10 +69,12 @@ type Spec struct {
 	// CostPath, InputUsagePath and OutputUsagePath locate the turn's cost and
 	// token counts. In jsonl output every line that has the field counts and the
 	// values add up (opencode reports one per step); in json there is one object.
-	CostPath        string `json:"cost_path,omitempty"`
-	InputUsagePath  string `json:"input_tokens_path,omitempty"`
-	OutputUsagePath string `json:"output_tokens_path,omitempty"`
-	CostCumulative  bool   `json:"cost_cumulative,omitempty"`
+	CostPath            string `json:"cost_path,omitempty"`
+	InputUsagePath      string `json:"input_tokens_path,omitempty"`
+	OutputUsagePath     string `json:"output_tokens_path,omitempty"`
+	CacheReadUsagePath  string `json:"cache_read_tokens_path,omitempty"`
+	CacheWriteUsagePath string `json:"cache_write_tokens_path,omitempty"`
+	CostCumulative      bool   `json:"cost_cumulative,omitempty"`
 	// ErrorHints maps a fragment of the CLI's failure text to advice appended to
 	// the error when the command fails with it.
 	ErrorHints map[string]string `json:"error_hints,omitempty"`
@@ -128,19 +132,23 @@ var profiles = map[string]Spec{
 		Bin: "claude",
 		// Verified against claude 2.1.305: -p --output-format json returns
 		// {result, session_id, is_error, total_cost_usd}.
-		Start:          []string{"-p", "--session-id", "{session}", "--output-format", "json"},
-		Continue:       []string{"-p", "--resume", "{session}", "--output-format", "json"},
-		Prompt:         "stdin",
-		Session:        "arg",
-		Output:         "json",
-		TextPath:       "result",
-		ErrorPath:      "error",
-		ErrorBoolPath:  "is_error",
-		CostPath:       "total_cost_usd",
-		CostCumulative: true,
-		ModelKeysPath:  "modelUsage",
-		ModelArgs:      []string{"--model", "{model}"},
-		ReadOnlyArgs:   []string{"--permission-mode", "plan", "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit"},
+		Start:               []string{"-p", "--session-id", "{session}", "--output-format", "json"},
+		Continue:            []string{"-p", "--resume", "{session}", "--output-format", "json"},
+		Prompt:              "stdin",
+		Session:             "arg",
+		Output:              "json",
+		TextPath:            "result",
+		ErrorPath:           "error",
+		ErrorBoolPath:       "is_error",
+		CostPath:            "total_cost_usd",
+		CostCumulative:      true,
+		InputUsagePath:      "usage.input_tokens",
+		OutputUsagePath:     "usage.output_tokens",
+		CacheReadUsagePath:  "usage.cache_read_input_tokens",
+		CacheWriteUsagePath: "usage.cache_creation_input_tokens",
+		ModelKeysPath:       "modelUsage",
+		ModelArgs:           []string{"--model", "{model}"},
+		ReadOnlyArgs:        []string{"--permission-mode", "plan", "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit"},
 		ErrorKinds: map[string]string{
 			"usage limit":                        "quota",
 			"credit balance":                     "quota",
@@ -415,6 +423,12 @@ func (s Spec) addTokens(rep *Reply, obj map[string]any) {
 	}
 	if n, ok := floatAt(obj, s.OutputUsagePath); ok {
 		rep.OutputTokens += int(n)
+	}
+	if n, ok := floatAt(obj, s.CacheReadUsagePath); ok {
+		rep.CacheReadTokens += int(n)
+	}
+	if n, ok := floatAt(obj, s.CacheWriteUsagePath); ok {
+		rep.CacheWriteTokens += int(n)
 	}
 }
 

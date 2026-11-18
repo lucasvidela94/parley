@@ -96,7 +96,7 @@ func TestServe(t *testing.T) {
 	for _, tool := range list.Result.Tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"participants", "open_conversation", "send_message", "read_conversation", "close_conversation"} {
+	for _, want := range []string{"participants", "open_conversation", "send_message", "read_conversation", "close_conversation", "usage"} {
 		if !names[want] {
 			t.Fatalf("missing tool %q in %v", want, names)
 		}
@@ -194,6 +194,17 @@ func TestServerPicksUpAnEditedConfigBetweenCalls(t *testing.T) {
 	raw, _ := json.Marshal(resp.Result)
 	if !strings.Contains(string(raw), `"isError":true`) || !strings.Contains(string(raw), "keeping the previous one") {
 		t.Fatalf("a broken edit must be an error that says what happened: %s", raw)
+	}
+}
+
+func TestUsageToolAnswersAndRejectsABadWindow(t *testing.T) {
+	s := New(newEngine(t), "test")
+	if _, err := s.dispatch(context.Background(), "usage", map[string]any{"since": "yesterday"}); err == nil {
+		t.Fatal("an invalid window must be reported")
+	}
+	out, err := s.dispatch(context.Background(), "usage", map[string]any{"since": "7d"})
+	if err != nil || !strings.Contains(out, "usage since") {
+		t.Fatalf("valid window: %q %v", out, err)
 	}
 }
 

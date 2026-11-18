@@ -328,7 +328,7 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	// A configured model is what the user asked for and wins; otherwise record
 	// the one the harness says it ran, so the transcript says who spoke.
 	model, source = recordedModel(model, source, rep)
-	reply := store.Message{ConversationID: conv.ID, Author: req.To, Kind: "message", Model: model, ModelSource: source, Body: rep.Text, CostUSD: rep.CostUSD, InputTokens: rep.InputTokens, OutputTokens: rep.OutputTokens}
+	reply := store.Message{ConversationID: conv.ID, Author: req.To, Kind: "message", Model: model, ModelSource: source, Body: rep.Text, CostUSD: rep.CostUSD, InputTokens: rep.InputTokens, OutputTokens: rep.OutputTokens, CacheReadTokens: rep.CacheReadTokens, CacheWriteTokens: rep.CacheWriteTokens}
 	// The answer is paid for: a signal that lands after it arrives must not
 	// keep it out of the transcript.
 	ctx = context.WithoutCancel(ctx)

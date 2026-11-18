@@ -102,6 +102,7 @@ open_conversation(topic="...", context="...", max_turns=6)   # multi-turn, optio
 send_message(to="claude", conversation_id="cnv_…", message="...")
 read_conversation(id="cnv_…", tail=4)              # or offset/limit; whole messages
 close_conversation(id="cnv_…", note="conclusion")
+usage(since="7d")                                  # messages, failures, cost, tokens per participant and model
 ```
 
 Or ask in plain language — the bundled skill knows the workflow:
@@ -123,6 +124,9 @@ parley cancel cnv_123                  # stop the turn running in that conversat
 parley close cnv_123 --note "in-memory plus a pending benchmark"
 parley list
 parley models cursor-opus              # what that participant's harness accepts as `model`
+parley usage                           # cost, tokens and failures by participant and model
+parley usage --since 7d                # or 24h, or a date (2026-11-01)
+parley usage --json                    # rows as objects
 parley send --to cursor --model grok-4.7-high "..."   # this call only, instead of the participant's model
 parley send --to claude-opus --effort medium "..."    # only harnesses with their own effort flag (Claude Code)
 parley participant add reviewer2 --harness claude --model claude-opus-5-5
@@ -154,6 +158,24 @@ model, so a record can show whether the two sides ran different models without p
 declared one was verified. When parley hands the turn to a child, it passes the model it pinned
 for that child (or an empty `PARLEY_MODEL` when it pinned none), so a chain never inherits its
 parent's model.
+
+### Cost, tokens and usage
+
+`parley usage` (and the MCP `usage` tool) groups the store by participant, model and where the
+model came from: messages, failed turns, cost, and the tokens the harness reported, whole or inside
+a window (`--since 24h`, `7d`, or `2026-11-01`). Cost adds up and the summary says which rows
+reported none.
+
+Tokens do not: harnesses count them differently, so the rows are never totalled across
+participants. Input, output and the two cache fields are kept apart, because a cache read and a
+fresh input token are priced differently and parley has no price table. Each row also shows on how
+many of its messages the harness reported cost and tokens (`cost 57/64 · tok 0/64`), so a gap in one
+harness is visible instead of hidden in a total.
+
+The store cannot tell a question from a reply: both are messages, and the summary says so. Failures
+are exact (they are their own kind), which makes the failed column the one number to trust across
+harnesses. Rows recorded before the cost fix may carry a Claude session total instead of the turn's;
+the store keeps what it had.
 
 ### Cost and cancelling
 
@@ -227,6 +249,7 @@ One declarative adapter, no Go required. A harness is a spec:
 | `error_path` / `error_event_type` / `error_bool_path` | how a failure shows up |
 | `cost_path` / `input_tokens_path` / `output_tokens_path` | where the turn's cost and token counts are. In JSONL every line that has the field counts and the values add up (OpenCode reports one per step) |
 | `cost_cumulative` | the cost field is the session's running total, not the turn's: parley records the difference from the previous turn of the same session, and the full value when the total drops (a new session). Claude Code declares it |
+| `cache_read_tokens_path` / `cache_write_tokens_path` | where the harness reports prompt-cache reads and writes, kept apart from input (Claude Code: `usage.cache_read_input_tokens` and `usage.cache_creation_input_tokens`). Only some harnesses report them |
 | `error_hints` | map from a fragment of the failure text (stderr or the parsed stdout message) to advice, appended as `(hint: …)`. Cursor uses it for the workspace-trust failure |
 | `error_kinds` | map from a fragment of that same text to a stable kind: `quota`, `auth`, `trust` or `rate_limit`. A classified failure starts `turn failed (quota):` and keeps the raw text, including any reset date. Only fragments seen in real output belong here; anything else stays unclassified |
 | `model_keys_path` | JSON output only: dotted path to an object whose keys are the models the turn used (claude's `modelUsage`). Recorded as the message's model when the participant sets none; a configured `model` wins. Cursor and codex do not report one, so their transcripts stay blank |

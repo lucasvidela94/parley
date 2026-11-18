@@ -7,6 +7,15 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 
 ## [Unreleased]
 
+### Added
+
+- **Usage by participant and model** (#66). `parley usage` and the MCP `usage` tool group the
+  store by author and model over all time or a window (`--since 24h|7d|2026-11-01`): messages,
+  failed turns, cost, and the tokens the harness reported, with a per-row count of how many
+  messages carried them. Cost adds up; token counts do not, because harnesses count them
+  differently. Claude's input, output and two cache fields are now recorded apart (a one-word
+  reply reports 2 input tokens next to 23035 cached), and `read` shows them.
+
 ### Fixed
 
 - **Claude's cost is recorded per turn, not per session** (#72). `total_cost_usd` is the session's
