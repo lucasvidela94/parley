@@ -32,7 +32,8 @@ type fake struct {
 	running chan struct{}
 	reports string // the model the harness says it used, like claude does
 
-	tokensIn, tokensOut int // usage the harness reports, 0 = nothing
+	tokensIn, tokensOut   int // usage the harness reports, 0 = nothing
+	cacheRead, cacheWrite int // cache usage the harness reports, 0 = nothing
 
 	// "GATE" in a script holds the call until gate is closed, and announces it
 	// on entered; active/maxActive count harness calls running at once.
@@ -82,7 +83,7 @@ func (f *fake) reply(ctx context.Context, prompt string, o harness.Options, cont
 	case strings.HasPrefix(out, "ERR:"):
 		return harness.Reply{}, errors.New(strings.TrimPrefix(out, "ERR:"))
 	}
-	return harness.Reply{Text: out, Model: f.reports, InputTokens: f.tokensIn, OutputTokens: f.tokensOut}, nil
+	return harness.Reply{Text: out, Model: f.reports, InputTokens: f.tokensIn, OutputTokens: f.tokensOut, CacheReadTokens: f.cacheRead, CacheWriteTokens: f.cacheWrite}, nil
 }
 
 func (f *fake) Start(ctx context.Context, prompt string, o harness.Options) (harness.Reply, error) {
@@ -828,6 +829,31 @@ func lastEnv(env []string, key string) (string, bool) {
 		}
 	}
 	return val, found
+}
+
+func TestCacheTokensReachTheMessageAndTheTranscript(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"a"}})
+	env.fakes["claude"].tokensIn, env.fakes["claude"].tokensOut = 2, 32
+	env.fakes["claude"].cacheRead, env.fakes["claude"].cacheWrite = 9000, 17079
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "cache", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: view.Conversation.ID, To: "claude", Message: "q"}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := env.e.st.Messages(ctx, view.Conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 || msgs[1].CacheReadTokens != 9000 || msgs[1].CacheWriteTokens != 17079 {
+		t.Fatalf("cache tokens must reach the message: %+v", msgs)
+	}
+	md := func() string { v, _ := env.e.Read(ctx, view.Conversation.ID); return v.Markdown() }()
+	if !strings.Contains(md, "cache 9000 r / 17079 w") {
+		t.Fatalf("the transcript must show the cache: %s", md)
+	}
 }
 
 func TestSendModelOverridesTheParticipantModelForThatCall(t *testing.T) {

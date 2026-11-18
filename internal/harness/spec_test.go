@@ -152,23 +152,23 @@ func TestParseReportsTheModelTheHarnessUsed(t *testing.T) {
 // opencode 2.1, claude), not invented.
 func TestParseUsageAsEachHarnessReportsIt(t *testing.T) {
 	cases := []struct {
-		name         string
-		out          string
-		in, out2     int
-		cost         float64
-		reportsUsage bool
+		name                            string
+		out                             string
+		in, out2, cacheRead, cacheWrite int
+		cost                            float64
+		reportsUsage                    bool
 	}{
-		{"cursor", `{"type":"result","is_error":false,"result":"ok","session_id":"s","usage":{"inputTokens":9178,"outputTokens":134,"cacheReadTokens":6016}}`, 9178, 134, 0, true},
+		{"cursor", `{"type":"result","is_error":false,"result":"ok","session_id":"s","usage":{"inputTokens":9178,"outputTokens":134,"cacheReadTokens":6016}}`, 9178, 134, 0, 0, 0, true},
 		{"codex", `{"type":"thread.started","thread_id":"t"}
 {"type":"item.completed","item":{"type":"agent_message","text":"ok"}}
-{"type":"turn.completed","usage":{"input_tokens":17213,"cached_input_tokens":0,"output_tokens":22}}`, 17213, 22, 0, true},
+{"type":"turn.completed","usage":{"input_tokens":17213,"cached_input_tokens":0,"output_tokens":22}}`, 17213, 22, 0, 0, 0, true},
 		{"opencode", `{"type":"step_start","sessionID":"s"}
 {"type":"text","sessionID":"s","part":{"type":"text","text":"ok"}}
 {"type":"step_finish","sessionID":"s","part":{"type":"step-finish","cost":0.5,"tokens":{"input":100,"output":10}}}
-{"type":"step_finish","sessionID":"s","part":{"type":"step-finish","cost":0.25,"tokens":{"input":200,"output":20}}}`, 300, 30, 0.75, true},
-		// Claude's input_tokens leaves the cache out (2 next to 17079 cached), so
-		// it would understate the turn: no tokens, only the cost it reports.
-		{"claude", `{"result":"ok","total_cost_usd":0.07,"usage":{"input_tokens":2,"output_tokens":32,"cache_creation_input_tokens":17079}}`, 0, 0, 0.07, false},
+{"type":"step_finish","sessionID":"s","part":{"type":"step-finish","cost":0.25,"tokens":{"input":200,"output":20}}}`, 300, 30, 0, 0, 0.75, true},
+		// Claude's input_tokens leaves the cache out, so the cache fields are
+		// recorded apart: 2 next to 17079 written and 9000 read.
+		{"claude", `{"result":"ok","total_cost_usd":0.07,"usage":{"input_tokens":2,"output_tokens":32,"cache_creation_input_tokens":17079,"cache_read_input_tokens":9000}}`, 2, 32, 9000, 17079, 0.07, true},
 	}
 	for _, c := range cases {
 		s, _ := Known(c.name)
@@ -176,8 +176,11 @@ func TestParseUsageAsEachHarnessReportsIt(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
 		}
-		if rep.InputTokens != c.in || rep.OutputTokens != c.out2 || rep.CostUSD != c.cost {
-			t.Errorf("%s: tokens %d/%d cost %v, want %d/%d cost %v", c.name, rep.InputTokens, rep.OutputTokens, rep.CostUSD, c.in, c.out2, c.cost)
+		if rep.InputTokens != c.in || rep.OutputTokens != c.out2 || rep.CostUSD != c.cost ||
+			rep.CacheReadTokens != c.cacheRead || rep.CacheWriteTokens != c.cacheWrite {
+			t.Errorf("%s: tokens %d/%d cache %d/%d cost %v, want %d/%d cache %d/%d cost %v", c.name,
+				rep.InputTokens, rep.OutputTokens, rep.CacheReadTokens, rep.CacheWriteTokens, rep.CostUSD,
+				c.in, c.out2, c.cacheRead, c.cacheWrite, c.cost)
 		}
 	}
 	// A spec with no usage paths reports nothing; zero means unknown, never a guess.

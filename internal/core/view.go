@@ -75,6 +75,9 @@ func (v View) Markdown() string {
 			if m.InputTokens > 0 || m.OutputTokens > 0 {
 				at += fmt.Sprintf(" · %d in / %d out", m.InputTokens, m.OutputTokens)
 			}
+			if m.CacheReadTokens > 0 || m.CacheWriteTokens > 0 {
+				at += fmt.Sprintf(" · cache %d r / %d w", m.CacheReadTokens, m.CacheWriteTokens)
+			}
 			fmt.Fprintf(&b, "\n### %s\n_%s_\n\n%s\n", label, at, strings.TrimSpace(m.Body))
 		}
 	}

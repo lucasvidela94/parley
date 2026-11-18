@@ -5,6 +5,17 @@ and versions follow [Semantic Versioning](https://semver.org/) (before 1.0, a mi
 behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 [lucasvidela94/parley](https://github.com/lucasvidela94/parley/issues).
 
+## [Unreleased]
+
+### Added
+
+- **Usage by participant and model** (#66). `parley usage` and the MCP `usage` tool group the
+  store by author and model over all time or a window (`--since 24h|7d|2026-11-01`): messages,
+  failed turns, cost, and the tokens the harness reported, with a per-row count of how many
+  messages carried them. Cost adds up; token counts do not, because harnesses count them
+  differently. Claude's input, output and two cache fields are now recorded apart (a one-word
+  reply reports 2 input tokens next to 23035 cached), and `read` shows them.
+
 ## [0.8.0] - 2026-11-18
 
 ### Added
