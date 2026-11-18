@@ -715,8 +715,6 @@ func TestTheQuestionCarriesTheModelTheCallerDeclared(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := view.Conversation.ID
-	// The identity is "opencode" and it also answers: one name, two models, and
-	// the transcript must say which one was a claim about itself.
 	if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "opencode", Message: "q"}); err != nil {
 		t.Fatal(err)
 	}
@@ -749,8 +747,6 @@ func TestTheQuestionCarriesTheModelTheCallerDeclared(t *testing.T) {
 	}
 }
 
-// A chain's child declares the model parley pinned for it. When the same id is
-// also pinned on a reply, it is more than a claim, so the header shows it plain.
 func TestAPinnedModelIsNotMarkedAsDeclared(t *testing.T) {
 	env := newTestEngineModel(t, map[string][]string{"opencode": {"a"}}, "same-model")
 	env.e.cfg.Participants["opencode"] = config.Participant{Harness: "opencode", Model: "same-model"}
@@ -791,9 +787,6 @@ func TestWithoutADeclaredModelTheQuestionRecordsNothing(t *testing.T) {
 	}
 }
 
-// A child inherits the parent's whole environment, so PARLEY_MODEL must always
-// be present: the pinned model, or empty when parley pinned nothing. Otherwise
-// a grandchild would claim the model of the process that spawned its parent.
 func TestAChildGetsTheModelParleyPinnedAndNeverTheParentOne(t *testing.T) {
 	env := newTestEngineModel(t, map[string][]string{"claude": {"a", "b"}, "opencode": {"c"}}, "parent-model")
 	env.e.cfg.Participants["pinned"] = config.Participant{Harness: "claude", Model: "configured-model"}

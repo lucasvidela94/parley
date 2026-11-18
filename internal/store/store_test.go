@@ -61,8 +61,6 @@ func TestLastReportedModelIgnoresWhatWasAskedFor(t *testing.T) {
 		{Author: "claude", Kind: "message", Model: "claude-sonnet-5-5", ModelSource: "override", Body: "b"},
 		{Author: "claude", Kind: "message", Model: "claude-opus-5-5", ModelSource: "reported", Body: "c"},
 		{Author: "claude", Kind: "message", Model: "claude-haiku-5-5", ModelSource: "override", Body: "d"},
-		// A declared model is the author's claim about itself, not what the
-		// harness ran: it must never answer "last reported by the harness".
 		{Author: "claude", Kind: "message", Model: "declared-x", ModelSource: "declared", Body: "e"},
 		{Author: "self", Kind: "message", Model: "caller-model", ModelSource: "declared", Body: "q"},
 	} {
