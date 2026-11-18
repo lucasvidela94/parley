@@ -319,10 +319,15 @@ monotonically (14.948, 15.096) while a new directory starts near zero. Recording
 cost overcounts the maintainer's store by 6-7x.
 
 A spec declares `cost_cumulative`; core then asks the store for the difference from the previous
-turn of that session id and records the full value when the total drops (a new session, or a
-harness that reset). The store keeps the last total per harness session id, which the session lock
-already serialises. Rows written before this decision keep their inflated value and are not
-rewritten: the fix cannot recover a per-turn number the store never had.
+turn of that session id and records the full value when the total drops (a harness that restarted
+its count). A session that predates the first total has no baseline: that turn records no cost
+instead of the whole session, and the next turn is measured from the total it reported. Without
+that rule, the first Claude turn after upgrading would pay the entire session again. The store keeps
+the last total per harness session id, which the session lock already serialises, and the
+bookkeeping does not inherit the turn's cancellation: the answer is already recorded, so a cancel
+that lands just after it must not leave the baseline behind. Rows written before this decision keep
+their inflated value and are not rewritten: the fix cannot recover a per-turn number the store
+never had.
 
 ## D28 — Usage is per participant and model; token totals never cross rows
 **Decided (issue #66).** `usage` answers "which voice is worth what it costs" without pretending

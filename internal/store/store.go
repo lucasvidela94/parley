@@ -192,16 +192,22 @@ func (s *Store) ClearSession(ctx context.Context, participant, dir string) error
 }
 
 // TurnCost takes the total a harness reports for a session and returns what
-// this turn added, remembering the total for the next one.
-func (s *Store) TurnCost(ctx context.Context, sessionID string, total float64) (float64, error) {
+// this turn added, remembering the total for the next one. A session that
+// predates the first total has no baseline, so the turn's share is unknown.
+func (s *Store) TurnCost(ctx context.Context, sessionID string, total float64, resumed bool) (float64, error) {
 	var prev float64
 	err := s.db.QueryRowContext(ctx, `SELECT cost_usd FROM session_costs WHERE session_id=?`, sessionID).Scan(&prev)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 	delta := total
-	if err == nil && total >= prev {
+	switch {
+	case err == nil && total >= prev:
 		delta = total - prev
+	case err == nil:
+		delta = total
+	case resumed:
+		delta = 0
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO session_costs(session_id,cost_usd) VALUES(?,?)
 ON CONFLICT(session_id) DO UPDATE SET cost_usd=excluded.cost_usd`, sessionID, total)
