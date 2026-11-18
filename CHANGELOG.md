@@ -9,6 +9,12 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 
 ### Added
 
+- **OpenCode turns record the model they ran** (#65). Its turn events carry cost, tokens and a
+  session id but no model, so 67 of 78 OpenCode replies in the maintainer's store had none. A spec
+  can now name a second command (`session_model_args` plus a path) that reads the model from the
+  harness's own session record; for OpenCode that is `session export`, which reports `provider/id`
+  for the last message that ran. It runs only after a turn that named no model and pinned none, and
+  it is best effort: a failure records nothing and never fails the turn.
 - **The caller can declare the model it runs** (#67). `PARLEY_MODEL` goes on the question message
   with source `declared`, and `read` marks it `(declared)`, in the message line and in the header,
   so a reader can tell the caller's claim from a model parley pinned or a harness reported. Env
