@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/lucasvidela94/parley/internal/core"
 )
@@ -187,6 +188,17 @@ func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (s
 	case "models":
 		return s.e.Models(ctx, str(a, "participant"))
 
+	case "usage":
+		since, err := core.ParseSince(str(a, "since"), time.Now())
+		if err != nil {
+			return "", err
+		}
+		u, err := s.e.Usage(ctx, since)
+		if err != nil {
+			return "", err
+		}
+		return u.Markdown(), nil
+
 	case "read_conversation":
 		view, err := s.e.Read(ctx, str(a, "id"))
 		if err != nil {
@@ -277,6 +289,16 @@ func tools() []any {
 				"type":       "object",
 				"required":   []string{"participant"},
 				"properties": map[string]any{"participant": map[string]any{"type": "string", "description": "Participant name (see participants)"}},
+			},
+		},
+		map[string]any{
+			"name":        "usage",
+			"description": "Messages, failed turns, cost and tokens per participant and model, for all time or a window (since: 24h, 7d or 2026-11-01). Token counts are per harness and do not add up across rows.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"since": map[string]any{"type": "string", "description": "Window: a duration (24h, 7d) or a date (2026-11-01). Default: all time."},
+				},
 			},
 		},
 		map[string]any{

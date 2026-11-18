@@ -311,3 +311,19 @@ It is best effort. A command that fails, prints something else or names nothing 
 the turn stays a success; the transcript then says unknown, which is the truth parley has (D21). A
 session that used several models keeps only the last, which is what a turn's record needs and what
 `models` already shows as history.
+
+## D28 — Usage is per participant and model; token totals never cross rows
+**Decided (issue #66).** `usage` answers "which voice is worth what it costs" without pretending
+the numbers are comparable. Rows are author + model + where the model came from (`configured`,
+`override`, `reported`, `declared`; the model empty when the harness named none), with messages,
+failed turns, cost and tokens, and with how many messages actually carried a cost or a token count:
+OpenCode reported tokens on 11 of 83 messages and Claude on none, and a total would hide that gap.
+
+Cost adds up because it is dollars; tokens do not, because harnesses count them differently. Cache
+reads and writes are their own columns: a one-word Claude reply reports 2 input tokens next to 23035
+written and 9222 read, and one "input" number would imply a price parley cannot back up. Claude
+Code's `usage` fields are per turn; its `total_cost_usd` is not, which is the cumulative-cost fix in
+issue #72.
+
+The store records questions and replies as the same kind, so the summary says "messages" and states
+that questions from this side are included. Failures are their own kind, so that column is exact.

@@ -73,6 +73,8 @@ func run(args []string) error {
 		return cmdSession(args[1:])
 	case "models":
 		return cmdModels(args[1:])
+	case "usage":
+		return cmdUsage(args[1:])
 	default:
 		return runMaintenance(args)
 	}
@@ -110,6 +112,8 @@ func usage() {
   parley participant rm  <name>
   parley session reset <name>
   parley models <name>       # the models that participant's harness accepts (for "model")
+  parley usage [--since <24h|7d|2026-11-01>] [--json]
+                             # messages, failures, cost and tokens by participant and model
   parley update [--check] [--force]
   parley mcp                 # MCP server over stdio (launched by the harness)
   parley setup [--write]     # register the MCP server in every detected harness
@@ -597,6 +601,36 @@ func cmdModels(args []string) error {
 		return err
 	}
 	fmt.Println(out)
+	return nil
+}
+
+func cmdUsage(args []string) error {
+	fs := flag.NewFlagSet("usage", flag.ContinueOnError)
+	since := fs.String("since", "", "window: 24h, 7d or 2026-11-01 (default: all time)")
+	asJSON := fs.Bool("json", false, "JSON output")
+	if err := parseFlagsFirst(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return errors.New("usage: parley usage [--since 24h|7d|2026-11-01] [--json]")
+	}
+	e, err := openEngine()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = e.Shutdown() }()
+	from, err := core.ParseSince(*since, time.Now())
+	if err != nil {
+		return err
+	}
+	u, err := e.Usage(context.Background(), from)
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		return jsonOut(u)
+	}
+	fmt.Println(u.Markdown())
 	return nil
 }
 

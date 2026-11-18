@@ -11,7 +11,7 @@ It does not decide, vote or schedule turns. The conclusion is yours to write.
 ## Tools
 
 MCP server `parley`: `participants`, `open_conversation`, `send_message`,
-`read_conversation`, `close_conversation`, `list_conversations`, `models`.
+`read_conversation`, `close_conversation`, `list_conversations`, `models`, `usage`.
 
 Same operations from a shell when the MCP server is not registered:
 
@@ -23,6 +23,7 @@ parley open --topic "..." --context "..." --max-turns 6
 parley read cnv_123 --tail 4                         # last 4 messages; or --offset/--limit
 parley cancel cnv_123                                # stop a running turn
 parley close cnv_123 --note "..."
+parley usage --since 7d                              # cost, tokens and failures per participant and model
 ```
 
 Start with `participants` when the user names an agent you have not used in this session.
@@ -125,6 +126,8 @@ Done when you can name each voice's position, where they differ, and what you de
   A model followed by `(declared)` is the author's own claim (`PARLEY_MODEL`), not something
   parley saw: it can show the two sides differed, never prove independence. When neither model is
   pinned or reported, say the check's independence is unknown.
+  `usage` shows failures and cost per participant and model: a voice that fails often costs
+  turns without producing a usable answer.
 - **Writing needs two switches.** `write=true` on the call and `permission: "write"` for the
   participant in the config; with a `read_only` participant the flag is ignored and the
   result carries a notice.
