@@ -61,6 +61,10 @@ func TestLastReportedModelIgnoresWhatWasAskedFor(t *testing.T) {
 		{Author: "claude", Kind: "message", Model: "claude-sonnet-5-5", ModelSource: "override", Body: "b"},
 		{Author: "claude", Kind: "message", Model: "claude-opus-5-5", ModelSource: "reported", Body: "c"},
 		{Author: "claude", Kind: "message", Model: "claude-haiku-5-5", ModelSource: "override", Body: "d"},
+		// A declared model is the author's claim about itself, not what the
+		// harness ran: it must never answer "last reported by the harness".
+		{Author: "claude", Kind: "message", Model: "declared-x", ModelSource: "declared", Body: "e"},
+		{Author: "self", Kind: "message", Model: "caller-model", ModelSource: "declared", Body: "q"},
 	} {
 		m.ConversationID = c.ID
 		if err := s.AddMessage(ctx, m); err != nil {
@@ -70,6 +74,9 @@ func TestLastReportedModelIgnoresWhatWasAskedFor(t *testing.T) {
 	got, at, ok, err := s.LastReportedModel(ctx, "claude")
 	if err != nil || !ok || got != "claude-opus-5-5" || at.IsZero() {
 		t.Fatalf("only the reported turn counts, and the later override must not win: %q %v %v %v", got, at, ok, err)
+	}
+	if got, _, ok, err := s.LastReportedModel(ctx, "self"); err != nil || ok {
+		t.Fatalf("a declared model is not a report: %q %v %v", got, ok, err)
 	}
 }
 

@@ -3,6 +3,7 @@ package core
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -42,11 +43,7 @@ func (v View) Markdown() string {
 	if len(v.Authors) > 0 {
 		names := make([]string, 0, len(v.Authors))
 		for _, a := range v.Authors {
-			if len(a.Models) > 0 {
-				names = append(names, a.Name+" ("+strings.Join(a.Models, ", ")+")")
-			} else {
-				names = append(names, a.Name)
-			}
+			names = append(names, authorLabel(a))
 		}
 		b.WriteString("Participants: " + strings.Join(names, ", ") + "\n")
 	}
@@ -73,7 +70,7 @@ func (v View) Markdown() string {
 		default:
 			label := m.Author
 			if m.Model != "" {
-				label += " · " + m.Model
+				label += " · " + modelWithSource(m.Model, m.ModelSource)
 			}
 			if m.InputTokens > 0 || m.OutputTokens > 0 {
 				at += fmt.Sprintf(" · %d in / %d out", m.InputTokens, m.OutputTokens)
@@ -82,6 +79,32 @@ func (v View) Markdown() string {
 		}
 	}
 	return b.String()
+}
+
+// authorLabel is one entry of the Participants line: the name and the models it
+// spoke with, marking the ones only its own word supports.
+func authorLabel(a Author) string {
+	if len(a.Models) == 0 {
+		return a.Name
+	}
+	models := make([]string, 0, len(a.Models))
+	for _, m := range a.Models {
+		if slices.Contains(a.Declared, m) {
+			m += " (declared)"
+		}
+		models = append(models, m)
+	}
+	return a.Name + " (" + strings.Join(models, ", ") + ")"
+}
+
+// modelWithSource marks a declared model: the author said what it runs, so the
+// transcript must not present it like a model parley pinned or a harness
+// reported. A reader who cannot tell the two apart is reading a claim as a fact.
+func modelWithSource(model, source string) string {
+	if model != "" && source == modelDeclared {
+		return model + " (declared)"
+	}
+	return model
 }
 
 // CloseSummary confirms a close: the id, the status and the note it recorded.

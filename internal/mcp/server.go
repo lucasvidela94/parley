@@ -149,20 +149,30 @@ func (s *Server) send(ctx context.Context, a map[string]any) (string, error) {
 	return out, nil
 }
 
+// participantsText is the MCP answer to `participants`: who can be reached,
+// what each one runs, and the model this session declares about itself.
+func (s *Server) participantsText(ctx context.Context) string {
+	parts := s.e.Participants(ctx)
+	lines := make([]string, 0, len(parts))
+	for i := range parts {
+		p := parts[i]
+		model := defaultStr(p["model"], "harness default, not pinned")
+		if p["model"] == "" && p["last_reported"] != "" {
+			model += "; last reported " + p["last_reported"] + " on " + p["last_reported_at"]
+		}
+		lines = append(lines, fmt.Sprintf("- %s (%s, %s, %s)", p["name"], p["harness"], model, p["permission"]))
+	}
+	local := s.e.Identity()
+	if m := s.e.DeclaredModel(); m != "" {
+		local += " (declares model " + m + ", unverified)"
+	}
+	return "Local identity: " + local + "\nParticipants:\n" + strings.Join(lines, "\n")
+}
+
 func (s *Server) dispatch(ctx context.Context, name string, a map[string]any) (string, error) {
 	switch name {
 	case "participants":
-		parts := s.e.Participants(ctx)
-		lines := make([]string, 0, len(parts))
-		for i := range parts {
-			p := parts[i]
-			model := defaultStr(p["model"], "harness default, not pinned")
-			if p["model"] == "" && p["last_reported"] != "" {
-				model += "; last reported " + p["last_reported"] + " on " + p["last_reported_at"]
-			}
-			lines = append(lines, fmt.Sprintf("- %s (%s, %s, %s)", p["name"], p["harness"], model, p["permission"]))
-		}
-		return "Local identity: " + s.e.Identity() + "\nParticipants:\n" + strings.Join(lines, "\n"), nil
+		return s.participantsText(ctx), nil
 
 	case "open_conversation":
 		view, err := s.e.Open(ctx, str(a, "topic"), str(a, "context"), integer(a, "max_turns"))

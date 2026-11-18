@@ -33,7 +33,7 @@ type Message struct {
 	Author         string  `json:"author"`
 	Kind           string  `json:"kind"`                   // message | note | error
 	Model          string  `json:"model,omitempty"`        // configured, per-call, or reported: see ModelSource
-	ModelSource    string  `json:"model_source,omitempty"` // configured | override | reported | ""
+	ModelSource    string  `json:"model_source,omitempty"` // configured | override | reported | declared | "" (declared: the author named it, not the harness)
 	Body           string  `json:"body"`
 	CostUSD        float64 `json:"cost_usd,omitempty"`
 	// Tokens exactly as the harness reported them; 0 means it said nothing.

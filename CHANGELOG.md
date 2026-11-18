@@ -7,6 +7,17 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 
 ## [Unreleased]
 
+### Added
+
+- **The caller can declare the model it runs** (#67). `PARLEY_MODEL` goes on the question message
+  with source `declared`, and `read` marks it `(declared)`, in the message line and in the header,
+  so a reader can tell the caller's claim from a model parley pinned or a harness reported. Env
+  only, no config field: the config file is one per user and shared by every harness on the machine,
+  so a single value there would claim the same model for all of them. A child receives the model
+  parley pinned for it, and an empty `PARLEY_MODEL` when it pinned none, because a child inherits
+  the whole environment and an always-present key is what stops a grandchild from claiming its
+  parent's model. `models` and "last reported by the harness" still ignore `declared`.
+
 ### Changed
 
 - **The skill says an independent check needs a different model** (#57). The loop guard compares

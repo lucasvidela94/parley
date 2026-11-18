@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -115,8 +116,16 @@ type testEnv struct {
 
 func newTestEngine(t *testing.T, scripts map[string][]string) *testEnv {
 	t.Helper()
+	return newTestEngineModel(t, scripts, "")
+}
+
+// newTestEngineModel pins the model this process declares it runs, the way
+// PARLEY_MODEL does for a real one.
+func newTestEngineModel(t *testing.T, scripts map[string][]string, declared string) *testEnv {
+	t.Helper()
 	t.Chdir(t.TempDir())
 	t.Setenv("PARLEY_IDENTITY", "opencode")
+	t.Setenv("PARLEY_MODEL", declared)
 	t.Setenv("PARLEY_CHAIN", "")
 	t.Setenv("PARLEY_DEPTH", "")
 
@@ -695,6 +704,137 @@ func TestTranscriptNamesTheModelTheHarnessReported(t *testing.T) {
 	if !strings.Contains(md, "### pinned · opus") || strings.Contains(md, "pinned · claude-opus-5-5") {
 		t.Fatalf("a configured model wins over the reported one:\n%s", md)
 	}
+}
+
+func TestTheQuestionCarriesTheModelTheCallerDeclared(t *testing.T) {
+	env := newTestEngineModel(t, map[string][]string{"opencode": {"answered"}}, "deepseek-v4.1-flash")
+	env.fakes["opencode"].reports = "claude-sonnet-5-5"
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "who asked", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	// The identity is "opencode" and it also answers: one name, two models, and
+	// the transcript must say which one was a claim about itself.
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: "opencode", Message: "q"}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := env.e.st.Messages(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 || msgs[0].Author != "opencode" || msgs[0].Model != "deepseek-v4.1-flash" || msgs[0].ModelSource != "declared" {
+		t.Fatalf("the question must carry the declared model: %+v", msgs)
+	}
+	md := func() string { v, _ := env.e.Read(ctx, id); return v.Markdown() }()
+	if !strings.Contains(md, "### opencode · deepseek-v4.1-flash (declared)") {
+		t.Fatalf("a declared model must be marked as such:\n%s", md)
+	}
+	if !strings.Contains(md, "### opencode · claude-sonnet-5-5") || strings.Contains(md, "claude-sonnet-5-5 (declared)") {
+		t.Fatalf("a reported model must not be marked as declared:\n%s", md)
+	}
+	if !strings.Contains(md, "opencode (deepseek-v4.1-flash (declared), claude-sonnet-5-5)") {
+		t.Fatalf("the header must keep the two models apart:\n%s", md)
+	}
+	v, err := env.e.Read(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Authors) != 1 || !slices.Contains(v.Authors[0].Models, "deepseek-v4.1-flash") || slices.Contains(v.Authors[0].Models, "deepseek-v4.1-flash (declared)") {
+		t.Fatalf("the model ids must stay raw for a machine to compare: %+v", v.Authors)
+	}
+	if !slices.Contains(v.Authors[0].Declared, "deepseek-v4.1-flash") {
+		t.Fatalf("the declared model must be listed as declared: %+v", v.Authors)
+	}
+}
+
+// A chain's child declares the model parley pinned for it. When the same id is
+// also pinned on a reply, it is more than a claim, so the header shows it plain.
+func TestAPinnedModelIsNotMarkedAsDeclared(t *testing.T) {
+	env := newTestEngineModel(t, map[string][]string{"opencode": {"a"}}, "same-model")
+	env.e.cfg.Participants["opencode"] = config.Participant{Harness: "opencode", Model: "same-model"}
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "same model", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: view.Conversation.ID, To: "opencode", Message: "q"}); err != nil {
+		t.Fatal(err)
+	}
+	md := func() string { v, _ := env.e.Read(ctx, view.Conversation.ID); return v.Markdown() }()
+	if !strings.Contains(md, "Participants: opencode (same-model)\n") {
+		t.Fatalf("a pinned model is not a claim:\n%s", md)
+	}
+}
+
+func TestWithoutADeclaredModelTheQuestionRecordsNothing(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"ok"}})
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "silent caller", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.e.Send(ctx, SendRequest{ConversationID: view.Conversation.ID, To: "claude", Message: "q"}); err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := env.e.st.Messages(ctx, view.Conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 2 || msgs[0].Model != "" || msgs[0].ModelSource != "" {
+		t.Fatalf("an unknown model must stay unknown, never guessed: %+v", msgs)
+	}
+	md := func() string { v, _ := env.e.Read(ctx, view.Conversation.ID); return v.Markdown() }()
+	if strings.Contains(md, "(declared)") {
+		t.Fatalf("nothing was declared:\n%s", md)
+	}
+}
+
+// A child inherits the parent's whole environment, so PARLEY_MODEL must always
+// be present: the pinned model, or empty when parley pinned nothing. Otherwise
+// a grandchild would claim the model of the process that spawned its parent.
+func TestAChildGetsTheModelParleyPinnedAndNeverTheParentOne(t *testing.T) {
+	env := newTestEngineModel(t, map[string][]string{"claude": {"a", "b"}, "opencode": {"c"}}, "parent-model")
+	env.e.cfg.Participants["pinned"] = config.Participant{Harness: "claude", Model: "configured-model"}
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "chain", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := view.Conversation.ID
+	cases := []struct {
+		to, model, want string
+	}{
+		{"pinned", "", "configured-model"},
+		{"pinned", "call-model", "call-model"},
+		{"opencode", "", ""},
+	}
+	for _, c := range cases {
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: id, To: c.to, Message: "q", Model: c.model}); err != nil {
+			t.Fatal(err)
+		}
+		childEnv := env.fakes[env.e.cfg.Participants[c.to].Harness].lastOpts().Env
+		got, found := lastEnv(childEnv, "PARLEY_MODEL")
+		if !found {
+			t.Fatalf("%s: PARLEY_MODEL missing from the child env: %v", c.to, childEnv)
+		}
+		if got != c.want {
+			t.Fatalf("%s with model %q: child PARLEY_MODEL = %q, want %q", c.to, c.model, got, c.want)
+		}
+	}
+}
+
+// lastEnv returns the last value of key, which is the one a child process sees:
+// os/exec drops earlier duplicates.
+func lastEnv(env []string, key string) (string, bool) {
+	val, found := "", false
+	for _, kv := range env {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == key {
+			val, found = v, true
+		}
+	}
+	return val, found
 }
 
 func TestSendModelOverridesTheParticipantModelForThatCall(t *testing.T) {
