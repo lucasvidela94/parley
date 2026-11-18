@@ -79,7 +79,10 @@ type Spec struct {
 	ErrorKinds map[string]string `json:"error_kinds,omitempty"`
 	// ModelKeysPath is a dotted path to an object whose keys are the model ids
 	// the turn used (claude's modelUsage). json output only.
-	ModelKeysPath string `json:"model_keys_path,omitempty"`
+	ModelKeysPath            string   `json:"model_keys_path,omitempty"`
+	SessionModelArgs         []string `json:"session_model_args,omitempty"`
+	SessionModelPath         string   `json:"session_model_path,omitempty"`
+	SessionModelProviderPath string   `json:"session_model_provider_path,omitempty"`
 
 	ModelArgs []string `json:"model_args,omitempty"`
 	// EffortArgs is argv appended when the call asks for an effort tier;
@@ -161,14 +164,17 @@ var profiles = map[string]Spec{
 		TextFilterEquals: "text",
 		ErrorEventType:   "error",
 		// One step_finish per model call; a turn with tools has several.
-		CostPath:        "part.cost",
-		InputUsagePath:  "part.tokens.input",
-		OutputUsagePath: "part.tokens.output",
-		ModelArgs:       []string{"--model", "{model}"},
-		ModelsArgs:      []string{"models"},
-		ReadOnlyArgs:    []string{"--agent", "plan"},
-		Verified:        true,
-		Notes:           "no MCP server mode; expose through the CLI or the v2 HTTP API",
+		CostPath:                 "part.cost",
+		InputUsagePath:           "part.tokens.input",
+		OutputUsagePath:          "part.tokens.output",
+		ModelArgs:                []string{"--model", "{model}"},
+		ModelsArgs:               []string{"models"},
+		SessionModelArgs:         []string{"session", "export", "{session}"},
+		SessionModelPath:         "messages[].model.id",
+		SessionModelProviderPath: "messages[].model.providerID",
+		ReadOnlyArgs:             []string{"--agent", "plan"},
+		Verified:                 true,
+		Notes:                    "no MCP server mode; expose through the CLI or the v2 HTTP API",
 	},
 	"codex": {
 		Bin:              "codex",
@@ -486,6 +492,16 @@ func strAt(obj map[string]any, path string) string {
 		}
 	}
 	return b.String()
+}
+
+func lastStrAt(obj map[string]any, path string) string {
+	var out string
+	for _, v := range all(obj, path) {
+		if s, ok := v.(string); ok && s != "" {
+			out = s
+		}
+	}
+	return out
 }
 
 // keysAt joins the sorted keys of the object at path; empty when there is none.

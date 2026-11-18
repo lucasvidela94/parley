@@ -220,7 +220,8 @@ The store records `model_source` on every message: `configured` (the participant
 model it ran); D25 adds `declared` (the author named its own model). Only `reported` can describe a
 harness default. Before this, `Message.Model` held
 the requested model whenever one was set, so "the last model seen" was the request echoed back,
-not an observation; only Claude reports one (`model_keys_path`), and the store had no way to tell
+not an observation; only Claude reports one in the turn output (`model_keys_path`), and the store
+had no way to tell
 the two apart. `participants`/`models` show the reported model as history with its date, never as
 the current default: the harness can change it in an update.
 
@@ -292,3 +293,21 @@ because `args` can still override the pin and the harness can ignore it.
 `View.Authors` keeps the ids raw and lists the declared ones apart, so a machine comparing models is
 not handed presentation text; only the markdown adds the mark, and only for an id that no message
 from that author pinned or reported.
+
+## D26 — A model the turn output hides is read from the session record
+**Decided (issue #65).** OpenCode is the most consulted participant in the maintainer's store (78
+replies, 67 without a model) and its `run --format json` events carry cost, tokens and sessionID but
+no model. The session does: `opencode session export <id>` prints `{info, messages}`, and every
+message that ran carries `model{id, providerID}`; the last message (the user's) carries none, so the
+last non-empty one is the turn's. Measured at v2.3.0: 0.37 s for a 17-message session.
+
+The second command is a spec field, not OpenCode-specific code: `session_model_args` (argv, with
+`{session}` and `{dir}`), `session_model_path`, and an optional `session_model_provider_path` joined
+as `provider/id`, the spelling `--model` accepts. It runs only after a successful turn whose output
+named no model and where the call pinned none: a pinned model is what the turn ran, and asking again
+would spend a process to confirm it.
+
+It is best effort. A command that fails, prints something else or names nothing records nothing and
+the turn stays a success; the transcript then says unknown, which is the truth parley has (D21). A
+session that used several models keeps only the last, which is what a turn's record needs and what
+`models` already shows as history.

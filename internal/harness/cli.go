@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -75,7 +76,52 @@ func (c *CLI) run(ctx context.Context, args []string, prompt string, o Options) 
 	if rep.SessionID == "" && c.spec.Session == "arg" {
 		rep.SessionID = o.SessionID
 	}
+	if rep.Model == "" && o.Model == "" {
+		rep.Model = c.sessionModel(ctx, rep.SessionID, o)
+	}
 	return rep, nil
+}
+
+func (c *CLI) sessionModel(ctx context.Context, session string, o Options) string {
+	if len(c.spec.SessionModelArgs) == 0 {
+		return ""
+	}
+	if session == "" {
+		session = o.SessionID
+	}
+	if session == "" {
+		return ""
+	}
+	args := make([]string, 0, len(c.spec.SessionModelArgs))
+	for _, a := range c.spec.SessionModelArgs {
+		a = strings.ReplaceAll(a, "{session}", session)
+		a = strings.ReplaceAll(a, "{dir}", o.Dir)
+		args = append(args, a)
+	}
+	cmd := exec.CommandContext(ctx, c.spec.Bin, args...)
+	killGroup(cmd)
+	cmd.WaitDelay = waitDelay
+	if o.Dir != "" {
+		cmd.Dir = o.Dir
+	}
+	cmd.Env = append(os.Environ(), o.Env...)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	if err := cmd.Run(); err != nil || ctx.Err() != nil {
+		return ""
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &obj); err != nil {
+		return ""
+	}
+	model := lastStrAt(obj, c.spec.SessionModelPath)
+	if model == "" {
+		return ""
+	}
+	if provider := lastStrAt(obj, c.spec.SessionModelProviderPath); provider != "" {
+		model = provider + "/" + model
+	}
+	return model
 }
 
 // hint is the spec's advice for a failure whose text it recognises, ready to

@@ -51,6 +51,8 @@ harness is a `Spec` in `internal/harness/spec.go` or inline config — not a new
 
 ## Prohibitions
 
+- No comments unless the code cannot say it (a trap, an external fact, a rule a reader would
+  break). No narration of intent: a later agent reads it as fact and repeats it.
 - No `utils`, `common`, `helpers` packages. Put code where its caller is.
 - No interface without two real implementations. `Harness` qualifies; a new one does not
   until it has a second adapter.
