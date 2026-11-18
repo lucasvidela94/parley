@@ -31,9 +31,6 @@ const (
 	cancelPoll = time.Second
 	staleAfter = 5 * cancelPoll
 
-	// modelDeclared is the source of a model the author named itself
-	// (PARLEY_MODEL), as opposed to one parley pinned or the harness reported.
-	// It is a claim, not an observation, and read shows it as such.
 	modelDeclared = "declared"
 )
 
@@ -44,7 +41,7 @@ type Engine struct {
 	cfg        config.Config
 	st         *store.Store
 	identity   string
-	model      string // the model the caller declared it runs, empty when unknown
+	model      string
 	depth      int
 	chain      []string
 	newHarness func(config.Participant) harness.Harness
@@ -91,11 +88,8 @@ type View struct {
 
 // Author is one voice in a transcript and the models it spoke with.
 type Author struct {
-	Name   string   `json:"name"`
-	Models []string `json:"models,omitempty"`
-	// Declared holds the models this author named about itself (PARLEY_MODEL)
-	// and nothing else vouched for. The ids stay raw so a machine comparing
-	// models is not handed presentation text; the view marks them.
+	Name     string   `json:"name"`
+	Models   []string `json:"models,omitempty"`
 	Declared []string `json:"declared,omitempty"`
 }
 
@@ -350,9 +344,6 @@ func (e *Engine) Send(ctx context.Context, req SendRequest) (SendResult, error) 
 	return SendResult{Conversation: conv, Reply: reply, CostUSD: rep.CostUSD, Notice: e.writeNotice(req)}, nil
 }
 
-// recordQuestion stores the caller's message with the model it declared it
-// runs. That is a claim about itself, never guessed, so a record can show which
-// model asked as well as which answered.
 func (e *Engine) recordQuestion(ctx context.Context, convID, questionID, body string) error {
 	m := store.Message{ID: questionID, ConversationID: convID, Author: e.identity, Kind: "message", Body: body}
 	if e.model != "" {
@@ -450,9 +441,6 @@ func (e *Engine) Read(ctx context.Context, id string) (View, error) {
 	}
 	v := View{Conversation: conv, Messages: msgs, Total: len(msgs), Running: running}
 	seen := map[string]int{}
-	// A model is only "declared" when nothing else vouched for it: if the same
-	// id was also configured, overridden or reported for this author, the
-	// transcript shows it plain, because there it is more than a claim.
 	vouched := map[string]bool{}
 	for j := range msgs {
 		m := &msgs[j]
@@ -622,8 +610,6 @@ func (e *Engine) turn(ctx context.Context, release *func(), tr turnRequest, buil
 		h = harness.NewCLI(spec)
 	}
 	readOnly := e.readOnly(name, tr.write)
-	// One resolution feeds both the harness and the child's PARLEY_MODEL, so
-	// what the child is told it runs cannot drift from what was asked for.
 	model := p.Model
 	sessionKey := name
 	keyModel := ""
@@ -774,10 +760,6 @@ func (e *Engine) readOnly(name string, callerWantsWrite bool) bool {
 	return e.cfg.Participants[name].ReadOnly() || !callerWantsWrite
 }
 
-// childEnv is what the next link inherits. PARLEY_MODEL is always set, empty
-// when parley pinned nothing: the child inherits the parent's whole environment
-// (harness cli.go), and os/exec keeps the last value of a repeated key, so an
-// always-present key is what stops a grandchild from claiming its parent's model.
 func (e *Engine) childEnv(name, model string) []string {
 	chain := append(append([]string{}, e.chain...), name)
 	return []string{

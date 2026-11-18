@@ -81,8 +81,6 @@ func (v View) Markdown() string {
 	return b.String()
 }
 
-// authorLabel is one entry of the Participants line: the name and the models it
-// spoke with, marking the ones only its own word supports.
 func authorLabel(a Author) string {
 	if len(a.Models) == 0 {
 		return a.Name
@@ -97,9 +95,6 @@ func authorLabel(a Author) string {
 	return a.Name + " (" + strings.Join(models, ", ") + ")"
 }
 
-// modelWithSource marks a declared model: the author said what it runs, so the
-// transcript must not present it like a model parley pinned or a harness
-// reported. A reader who cannot tell the two apart is reading a claim as a fact.
 func modelWithSource(model, source string) string {
 	if model != "" && source == modelDeclared {
 		return model + " (declared)"
