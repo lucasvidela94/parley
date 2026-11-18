@@ -257,6 +257,33 @@ func TestSpendTurnStopsAtTheLimit(t *testing.T) {
 	}
 }
 
+func TestRequestCancelReportsATurnThatEndsOnceFlagged(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	first, err := s.StartTurn(ctx, "cnv_1", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.StartTurn(ctx, "cnv_1", "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`CREATE TRIGGER ends_when_flagged AFTER UPDATE OF cancel ON running_turns WHEN NEW.cancel=1 BEGIN
+	   DELETE FROM running_turns WHERE id=NEW.id;
+	 END`); err != nil {
+		t.Fatal(err)
+	}
+	// Inserted first, started later: RETURNING emits rows in arbitrary order, so
+	// the reported order must come from started_at and not from insertion.
+	if _, err := s.db.Exec(`UPDATE running_turns SET started_at=? WHERE id=?`, ts(time.Now().Add(time.Hour)), first); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.RequestCancel(ctx, "cnv_1", time.Now().Add(-time.Hour))
+	if err != nil || len(got) != 2 || got[0].ID != second || got[1].ID != first || got[0].Participant != "codex" || got[0].StartedAt.IsZero() {
+		t.Fatalf("a turn that ends as soon as it is flagged was still cancelled, or came back out of start order: %+v %v", got, err)
+	}
+}
+
 func TestRequestCancelDropsTurnsOfDeadProcesses(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()
