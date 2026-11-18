@@ -312,6 +312,18 @@ the turn stays a success; the transcript then says unknown, which is the truth p
 session that used several models keeps only the last, which is what a turn's record needs and what
 `models` already shows as history.
 
+## D27 — A session's running cost is stored as the turn's share
+**Decided (issue #72).** Claude Code's `total_cost_usd` is the session's total, not the turn's: two
+resumed turns reported 0.00438 and 0.00787, and within one directory the stored values rise
+monotonically (14.948, 15.096) while a new directory starts near zero. Recording it as the turn's
+cost overcounts the maintainer's store by 6-7x.
+
+A spec declares `cost_cumulative`; core then asks the store for the difference from the previous
+turn of that session id and records the full value when the total drops (a new session, or a
+harness that reset). The store keeps the last total per harness session id, which the session lock
+already serialises. Rows written before this decision keep their inflated value and are not
+rewritten: the fix cannot recover a per-turn number the store never had.
+
 ## D28 — Usage is per participant and model; token totals never cross rows
 **Decided (issue #66).** `usage` answers "which voice is worth what it costs" without pretending
 the numbers are comparable. Rows are author + model + where the model came from (`configured`,
@@ -322,8 +334,7 @@ OpenCode reported tokens on 11 of 83 messages and Claude on none, and a total wo
 Cost adds up because it is dollars; tokens do not, because harnesses count them differently. Cache
 reads and writes are their own columns: a one-word Claude reply reports 2 input tokens next to 23035
 written and 9222 read, and one "input" number would imply a price parley cannot back up. Claude
-Code's `usage` fields are per turn; its `total_cost_usd` is not, which is the cumulative-cost fix in
-issue #72.
+Code's `usage` fields are per turn; its `total_cost_usd` is not (D27).
 
 The store records questions and replies as the same kind, so the summary says "messages" and states
 that questions from this side are included. Failures are their own kind, so that column is exact.

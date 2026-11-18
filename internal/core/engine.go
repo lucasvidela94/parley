@@ -642,6 +642,7 @@ func (e *Engine) turn(ctx context.Context, release *func(), tr turnRequest, buil
 		opts.SessionID = sid
 		rep, err := h.Continue(ctx, build(dir, readOnly), opts)
 		if err == nil {
+			e.turnCost(ctx, spec, sid, &rep)
 			return rep, nil
 		}
 		if !missingSession(err) {
@@ -660,7 +661,18 @@ func (e *Engine) turn(ctx context.Context, release *func(), tr turnRequest, buil
 	if sid != "" {
 		_ = e.st.SetSession(ctx, sessionKey, dir, sid)
 	}
+	e.turnCost(ctx, spec, sid, &rep)
 	return rep, nil
+}
+
+// turnCost turns a session total into the cost of this turn, best effort.
+func (e *Engine) turnCost(ctx context.Context, spec harness.Spec, sessionID string, rep *harness.Reply) {
+	if !spec.CostCumulative || sessionID == "" || rep.CostUSD == 0 {
+		return
+	}
+	if cost, err := e.st.TurnCost(ctx, sessionID, rep.CostUSD); err == nil {
+		rep.CostUSD = cost
+	}
 }
 
 // lockSession makes turns that share a harness session run one at a time, even

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -241,6 +242,26 @@ INSERT INTO messages VALUES ('msg_old','cnv_old','self','message','hi',0,'2026-0
 	// The columns added later must be writable on a store the first release made.
 	if err := s.AddMessage(ctx, Message{ConversationID: "cnv_old", Author: "x", Kind: "message", Body: "new", InputTokens: 3, OutputTokens: 4}); err != nil {
 		t.Fatalf("an older store must accept usage after migrating: %v", err)
+	}
+}
+
+func TestTurnCostTakesTheDifferenceFromTheSessionTotal(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	cases := []struct {
+		session     string
+		total, want float64
+	}{
+		{"ses_1", 0.25, 0.25},
+		{"ses_1", 0.40, 0.15},
+		{"ses_2", 0.10, 0.10},
+		{"ses_1", 0.05, 0.05},
+	}
+	for _, c := range cases {
+		got, err := s.TurnCost(ctx, c.session, c.total)
+		if err != nil || math.Abs(got-c.want) > 1e-9 {
+			t.Fatalf("%s total %v: got %v, want %v (%v)", c.session, c.total, got, c.want, err)
+		}
 	}
 }
 

@@ -74,6 +74,7 @@ type Spec struct {
 	OutputUsagePath     string `json:"output_tokens_path,omitempty"`
 	CacheReadUsagePath  string `json:"cache_read_tokens_path,omitempty"`
 	CacheWriteUsagePath string `json:"cache_write_tokens_path,omitempty"`
+	CostCumulative      bool   `json:"cost_cumulative,omitempty"`
 	// ErrorHints maps a fragment of the CLI's failure text to advice appended to
 	// the error when the command fails with it.
 	ErrorHints map[string]string `json:"error_hints,omitempty"`
@@ -140,6 +141,7 @@ var profiles = map[string]Spec{
 		ErrorPath:           "error",
 		ErrorBoolPath:       "is_error",
 		CostPath:            "total_cost_usd",
+		CostCumulative:      true,
 		InputUsagePath:      "usage.input_tokens",
 		OutputUsagePath:     "usage.output_tokens",
 		CacheReadUsagePath:  "usage.cache_read_input_tokens",
