@@ -311,3 +311,15 @@ It is best effort. A command that fails, prints something else or names nothing 
 the turn stays a success; the transcript then says unknown, which is the truth parley has (D21). A
 session that used several models keeps only the last, which is what a turn's record needs and what
 `models` already shows as history.
+
+## D27 — A session's running cost is stored as the turn's share
+**Decided (issue #72).** Claude Code's `total_cost_usd` is the session's total, not the turn's: two
+resumed turns reported 0.00438 and 0.00787, and within one directory the stored values rise
+monotonically (14.948, 15.096) while a new directory starts near zero. Recording it as the turn's
+cost overcounts the maintainer's store by 6-7x.
+
+A spec declares `cost_cumulative`; core then asks the store for the difference from the previous
+turn of that session id and records the full value when the total drops (a new session, or a
+harness that reset). The store keeps the last total per harness session id, which the session lock
+already serialises. Rows written before this decision keep their inflated value and are not
+rewritten: the fix cannot recover a per-turn number the store never had.

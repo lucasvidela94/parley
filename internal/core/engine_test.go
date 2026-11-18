@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,7 +33,8 @@ type fake struct {
 	running chan struct{}
 	reports string // the model the harness says it used, like claude does
 
-	tokensIn, tokensOut int // usage the harness reports, 0 = nothing
+	tokensIn, tokensOut int       // usage the harness reports, 0 = nothing
+	costs               []float64 // cost the harness reports, per call
 
 	// "GATE" in a script holds the call until gate is closed, and announces it
 	// on entered; active/maxActive count harness calls running at once.
@@ -82,7 +84,11 @@ func (f *fake) reply(ctx context.Context, prompt string, o harness.Options, cont
 	case strings.HasPrefix(out, "ERR:"):
 		return harness.Reply{}, errors.New(strings.TrimPrefix(out, "ERR:"))
 	}
-	return harness.Reply{Text: out, Model: f.reports, InputTokens: f.tokensIn, OutputTokens: f.tokensOut}, nil
+	reply := harness.Reply{Text: out, Model: f.reports, InputTokens: f.tokensIn, OutputTokens: f.tokensOut}
+	if i < len(f.costs) {
+		reply.CostUSD = f.costs[i]
+	}
+	return reply, nil
 }
 
 func (f *fake) Start(ctx context.Context, prompt string, o harness.Options) (harness.Reply, error) {
@@ -828,6 +834,50 @@ func lastEnv(env []string, key string) (string, bool) {
 		}
 	}
 	return val, found
+}
+
+func TestACumulativeCostIsRecordedPerTurn(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"a", "b"}})
+	env.fakes["claude"].costs = []float64{0.25, 0.40}
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "cost", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: view.Conversation.ID, To: "claude", Message: "q"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgs, err := env.e.st.Messages(ctx, view.Conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 4 || msgs[1].CostUSD != 0.25 || math.Abs(msgs[3].CostUSD-0.15) > 1e-9 {
+		t.Fatalf("a session total must be recorded as the turn's share: %+v", msgs)
+	}
+}
+
+func TestAPerTurnCostIsRecordedAsReported(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"opencode": {"a", "b"}})
+	env.fakes["opencode"].costs = []float64{0.25, 0.40}
+	ctx := context.Background()
+	view, err := env.e.Open(ctx, "cost", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: view.Conversation.ID, To: "opencode", Message: "q"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgs, err := env.e.st.Messages(ctx, view.Conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 4 || msgs[1].CostUSD != 0.25 || msgs[3].CostUSD != 0.40 {
+		t.Fatalf("a per-turn cost must be recorded as reported: %+v", msgs)
+	}
 }
 
 func TestSendModelOverridesTheParticipantModelForThatCall(t *testing.T) {

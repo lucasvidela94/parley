@@ -5,6 +5,16 @@ and versions follow [Semantic Versioning](https://semver.org/) (before 1.0, a mi
 behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 [lucasvidela94/parley](https://github.com/lucasvidela94/parley/issues).
 
+## [Unreleased]
+
+### Fixed
+
+- **Claude's cost is recorded per turn, not per session** (#72). `total_cost_usd` is the session's
+  running total, so every resumed turn stored the whole session's cost: the maintainer's store sums
+  $435 where the turns add up to about $66, and two consecutive turns read 14.948 and 15.096. A spec
+  flag (`cost_cumulative`) now tells core to record the difference from the previous turn of that
+  session, and the full value when the total drops. Rows recorded before this fix are not corrected.
+
 ## [0.8.0] - 2026-11-18
 
 ### Added

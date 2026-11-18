@@ -116,6 +116,10 @@ CREATE TABLE IF NOT EXISTS running_turns (
   cancel          INTEGER NOT NULL DEFAULT 0,
   started_at      TEXT NOT NULL,
   seen_at         TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_costs (
+  session_id TEXT PRIMARY KEY,
+  cost_usd   REAL NOT NULL DEFAULT 0
 );`)
 	if err != nil {
 		return err
@@ -178,6 +182,23 @@ func (s *Store) ClearSession(ctx context.Context, participant, dir string) error
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE (participant=?1 OR substr(participant,1,length(?1)+1)=?1||char(31)) AND dir=?2`, participant, dir)
 	return err
+}
+
+// TurnCost takes the total a harness reports for a session and returns what
+// this turn added, remembering the total for the next one.
+func (s *Store) TurnCost(ctx context.Context, sessionID string, total float64) (float64, error) {
+	var prev float64
+	err := s.db.QueryRowContext(ctx, `SELECT cost_usd FROM session_costs WHERE session_id=?`, sessionID).Scan(&prev)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	delta := total
+	if err == nil && total >= prev {
+		delta = total - prev
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO session_costs(session_id,cost_usd) VALUES(?,?)
+ON CONFLICT(session_id) DO UPDATE SET cost_usd=excluded.cost_usd`, sessionID, total)
+	return delta, err
 }
 
 func (s *Store) CreateConversation(ctx context.Context, c Conversation) error {

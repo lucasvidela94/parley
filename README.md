@@ -226,6 +226,7 @@ One declarative adapter, no Go required. A harness is a spec:
 | `text_filter_path` / `text_filter_equals` | for JSONL: which lines count |
 | `error_path` / `error_event_type` / `error_bool_path` | how a failure shows up |
 | `cost_path` / `input_tokens_path` / `output_tokens_path` | where the turn's cost and token counts are. In JSONL every line that has the field counts and the values add up (OpenCode reports one per step) |
+| `cost_cumulative` | the cost field is the session's running total, not the turn's: parley records the difference from the previous turn of the same session, and the full value when the total drops (a new session). Claude Code declares it |
 | `error_hints` | map from a fragment of the failure text (stderr or the parsed stdout message) to advice, appended as `(hint: …)`. Cursor uses it for the workspace-trust failure |
 | `error_kinds` | map from a fragment of that same text to a stable kind: `quota`, `auth`, `trust` or `rate_limit`. A classified failure starts `turn failed (quota):` and keeps the raw text, including any reset date. Only fragments seen in real output belong here; anything else stays unclassified |
 | `model_keys_path` | JSON output only: dotted path to an object whose keys are the models the turn used (claude's `modelUsage`). Recorded as the message's model when the participant sets none; a configured `model` wins. Cursor and codex do not report one, so their transcripts stay blank |

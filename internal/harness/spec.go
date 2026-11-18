@@ -70,6 +70,7 @@ type Spec struct {
 	CostPath        string `json:"cost_path,omitempty"`
 	InputUsagePath  string `json:"input_tokens_path,omitempty"`
 	OutputUsagePath string `json:"output_tokens_path,omitempty"`
+	CostCumulative  bool   `json:"cost_cumulative,omitempty"`
 	// ErrorHints maps a fragment of the CLI's failure text to advice appended to
 	// the error when the command fails with it.
 	ErrorHints map[string]string `json:"error_hints,omitempty"`
@@ -127,18 +128,19 @@ var profiles = map[string]Spec{
 		Bin: "claude",
 		// Verified against claude 2.1.305: -p --output-format json returns
 		// {result, session_id, is_error, total_cost_usd}.
-		Start:         []string{"-p", "--session-id", "{session}", "--output-format", "json"},
-		Continue:      []string{"-p", "--resume", "{session}", "--output-format", "json"},
-		Prompt:        "stdin",
-		Session:       "arg",
-		Output:        "json",
-		TextPath:      "result",
-		ErrorPath:     "error",
-		ErrorBoolPath: "is_error",
-		CostPath:      "total_cost_usd",
-		ModelKeysPath: "modelUsage",
-		ModelArgs:     []string{"--model", "{model}"},
-		ReadOnlyArgs:  []string{"--permission-mode", "plan", "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit"},
+		Start:          []string{"-p", "--session-id", "{session}", "--output-format", "json"},
+		Continue:       []string{"-p", "--resume", "{session}", "--output-format", "json"},
+		Prompt:         "stdin",
+		Session:        "arg",
+		Output:         "json",
+		TextPath:       "result",
+		ErrorPath:      "error",
+		ErrorBoolPath:  "is_error",
+		CostPath:       "total_cost_usd",
+		CostCumulative: true,
+		ModelKeysPath:  "modelUsage",
+		ModelArgs:      []string{"--model", "{model}"},
+		ReadOnlyArgs:   []string{"--permission-mode", "plan", "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit"},
 		ErrorKinds: map[string]string{
 			"usage limit":                        "quota",
 			"credit balance":                     "quota",
