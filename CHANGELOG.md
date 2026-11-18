@@ -18,11 +18,18 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
 
 ### Fixed
 
+- **`cancel` reports the turn it cancels** (#64). `RequestCancel` flagged the live turns and then listed
+  them, so a turn that saw the flag and ended in that gap left the list empty and `cancel` answered
+  "no turn in progress" for a turn it had just stopped (5 of 600 races on `main`). The flag and the
+  list are now one statement, and the turns are sorted by start time in Go because `RETURNING` has no
+  `ORDER BY`. A regression test deletes the row as soon as it is flagged, the deterministic form of
+  that race, and checks that a turn inserted first but started later is reported second.
 - **Messages stay in order when two land in the same second.** `created_at` is RFC3339Nano text,
   which trims trailing zeros, so `…00.5Z` compared as *later* than `…00.51Z`; `read` could show a
   one-second burst backwards, and `models`/`participants` could pick the older reported model.
-  Queries now sort by `julianday(created_at)` (and `julianday(started_at)` for running turns),
-  which is chronological for both trimmed and untrimmed timestamps. A regression test inserts two
+  Queries now sort by `julianday(created_at)` (and `julianday(started_at)` for running turns; the
+  list `cancel` returns is sorted in Go since #64), which is chronological for both trimmed and
+  untrimmed timestamps. A regression test inserts two
   messages 10 ms apart in the same second.
 - **A turn that waited for a participant sees the reply it waited for** (#53). The session lock
   was released before the reply (or error) was recorded, so a waiting turn could take it in that

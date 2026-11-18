@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -329,10 +330,7 @@ func (s *Store) RequestCancel(ctx context.Context, conversationID string, staleB
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM running_turns WHERE conversation_id=? AND julianday(seen_at)<julianday(?)`, conversationID, ts(staleBefore)); err != nil {
 		return nil, err
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE running_turns SET cancel=1 WHERE conversation_id=?`, conversationID); err != nil {
-		return nil, err
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,conversation_id,participant,started_at FROM running_turns WHERE conversation_id=? ORDER BY julianday(started_at)`, conversationID)
+	rows, err := s.db.QueryContext(ctx, `UPDATE running_turns SET cancel=1 WHERE conversation_id=? RETURNING id,conversation_id,participant,started_at`, conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +345,11 @@ func (s *Store) RequestCancel(ctx context.Context, conversationID string, staleB
 		r.StartedAt, _ = time.Parse(time.RFC3339Nano, started)
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	slices.SortStableFunc(out, func(a, b RunningTurn) int { return a.StartedAt.Compare(b.StartedAt) })
+	return out, nil
 }
 
 // RunningTurns lists the live turns of a conversation without touching them.
