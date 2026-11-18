@@ -642,7 +642,7 @@ func (e *Engine) turn(ctx context.Context, release *func(), tr turnRequest, buil
 		opts.SessionID = sid
 		rep, err := h.Continue(ctx, build(dir, readOnly), opts)
 		if err == nil {
-			e.turnCost(ctx, spec, sid, &rep)
+			e.turnCost(ctx, spec, sid, true, &rep)
 			return rep, nil
 		}
 		if !missingSession(err) {
@@ -661,16 +661,18 @@ func (e *Engine) turn(ctx context.Context, release *func(), tr turnRequest, buil
 	if sid != "" {
 		_ = e.st.SetSession(ctx, sessionKey, dir, sid)
 	}
-	e.turnCost(ctx, spec, sid, &rep)
+	e.turnCost(ctx, spec, sid, false, &rep)
 	return rep, nil
 }
 
-// turnCost turns a session total into the cost of this turn, best effort.
-func (e *Engine) turnCost(ctx context.Context, spec harness.Spec, sessionID string, rep *harness.Reply) {
+// turnCost turns a session total into the cost of this turn, best effort. The
+// bookkeeping does not inherit the turn's cancellation: the answer is already
+// recorded, and a cancelled context must not leave the baseline behind.
+func (e *Engine) turnCost(ctx context.Context, spec harness.Spec, sessionID string, resumed bool, rep *harness.Reply) {
 	if !spec.CostCumulative || sessionID == "" || rep.CostUSD == 0 {
 		return
 	}
-	if cost, err := e.st.TurnCost(ctx, sessionID, rep.CostUSD); err == nil {
+	if cost, err := e.st.TurnCost(context.WithoutCancel(ctx), sessionID, rep.CostUSD, resumed); err == nil {
 		rep.CostUSD = cost
 	}
 }

@@ -251,16 +251,20 @@ func TestTurnCostTakesTheDifferenceFromTheSessionTotal(t *testing.T) {
 	cases := []struct {
 		session     string
 		total, want float64
+		resumed     bool
 	}{
-		{"ses_1", 0.25, 0.25},
-		{"ses_1", 0.40, 0.15},
-		{"ses_2", 0.10, 0.10},
-		{"ses_1", 0.05, 0.05},
+		{"ses_1", 0.25, 0.25, false},
+		{"ses_1", 0.40, 0.15, true},
+		{"ses_2", 0.10, 0.10, false},
+		{"ses_1", 0.05, 0.05, true},
+		{"ses_3", 15.096, 0, true},
+		{"ses_3", 15.24, 0.144, true},
+		{"ses_4", 3.0, 3.0, false},
 	}
 	for _, c := range cases {
-		got, err := s.TurnCost(ctx, c.session, c.total)
+		got, err := s.TurnCost(ctx, c.session, c.total, c.resumed)
 		if err != nil || math.Abs(got-c.want) > 1e-9 {
-			t.Fatalf("%s total %v: got %v, want %v (%v)", c.session, c.total, got, c.want, err)
+			t.Fatalf("%s total %v resumed=%v: got %v, want %v (%v)", c.session, c.total, c.resumed, got, c.want, err)
 		}
 	}
 }

@@ -22,7 +22,9 @@ behaviour). Dates are UTC, as GitHub shows them. Issue numbers refer to
   running total, so every resumed turn stored the whole session's cost: the maintainer's store sums
   $435 where the turns add up to about $66, and two consecutive turns read 14.948 and 15.096. A spec
   flag (`cost_cumulative`) now tells core to record the difference from the previous turn of that
-  session, and the full value when the total drops. Rows recorded before this fix are not corrected.
+  session, and the full value when the total drops. Rows recorded before this fix are not corrected,
+  and the first turn of a session that already existed records no cost: there is no baseline to
+  subtract, so the next turn is measured from that total.
 
 ## [0.8.0] - 2026-11-18
 

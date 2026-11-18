@@ -881,6 +881,35 @@ func TestAPerTurnCostIsRecordedAsReported(t *testing.T) {
 	}
 }
 
+func TestAnExistingSessionWithoutABaselineRecordsNoCost(t *testing.T) {
+	env := newTestEngine(t, map[string][]string{"claude": {"a", "b"}})
+	env.fakes["claude"].costs = []float64{15.096, 15.24}
+	ctx := context.Background()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.e.st.SetSession(ctx, "claude", dir, "sid_old"); err != nil {
+		t.Fatal(err)
+	}
+	view, err := env.e.Open(ctx, "baseline", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := env.e.Send(ctx, SendRequest{ConversationID: view.Conversation.ID, To: "claude", Message: "q"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	msgs, err := env.e.st.Messages(ctx, view.Conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 4 || msgs[1].CostUSD != 0 || math.Abs(msgs[3].CostUSD-0.144) > 1e-9 {
+		t.Fatalf("a session with no baseline must not record its whole total: %+v", msgs)
+	}
+}
+
 func TestCacheTokensReachTheMessageAndTheTranscript(t *testing.T) {
 	env := newTestEngine(t, map[string][]string{"claude": {"a"}})
 	env.fakes["claude"].tokensIn, env.fakes["claude"].tokensOut = 2, 32
